@@ -77,7 +77,7 @@ async function persist(col,doc,deleted){
   const k=col+'/'+doc.id;
   try{
     if(deleted)await idbDelMany('docs',[k]);else await idbPutMany('docs',[{k,col,doc}]);
-    if(ST.mode==='server'){await idbPutMany('outbox',[{k,col,doc:deleted?{id:doc.id,_deleted:true,updatedAt:new Date().toISOString()}:doc}]);ST.pending++;scheduleSync(700)}
+    if(ST.mode==='server'){await idbPutMany('outbox',[{k,col,doc:deleted?{id:doc.id,_deleted:true,updatedAt:new Date().toISOString()}:doc}]);ST.pending++;scheduleSync(250)}
   }catch(e){toast('No se pudo guardar en este equipo','err')}
 }
 async function save(col,obj){
@@ -95,6 +95,16 @@ const api=async(p,body,method)=>{
   if(!r.ok)throw Object.assign(new Error(j.error||'Error del servidor ('+r.status+')'),{status:r.status});
   return j;
 };
+// Tiempo real: el servidor avisa cuando otro equipo guarda algo y se sincroniza al instante.
+let ES=null;
+function connectLive(){
+  if(ES){ES.close();ES=null}
+  if(ST.mode!=='server'||!ST.token||!('EventSource' in window))return;
+  try{ES=new EventSource(ST.server.replace(/\/$/,'')+'/api/events?token='+encodeURIComponent(ST.token));
+    ES.addEventListener('cambio',e=>{if(Number(e.data)>ST.since)scheduleSync(50)});
+    ES.onopen=()=>scheduleSync(50);
+  }catch(e){}
+}
 function scheduleSync(ms){clearTimeout(ST.timer);ST.timer=setTimeout(sync,ms)}
 async function sync(){
   if(ST.mode!=='server'||!ST.token||ST.syncing)return;
@@ -120,9 +130,9 @@ async function sync(){
     ST.sync='ok';ST.lastSync=new Date().toISOString();LS.set('lastSync',ST.lastSync);
     await seedBase();
   }catch(e){
-    if(e.status===401){ST.token='';LS.del('token');ST.sync='idle';S.screen='login';toast('Tu sesión venció. Volvé a ingresar.','err')}
+    if(e.status===401){if(ES){ES.close();ES=null}ST.token='';LS.del('token');ST.sync='idle';S.screen='login';toast('Tu sesión venció. Volvé a ingresar.','err')}
     else ST.sync=e.status?'error':'offline';
-  }finally{ST.syncing=false;render()}
+  }finally{ST.syncing=false;renderSoft()}
 }
 function renderStatus(){const el=document.querySelectorAll('.js-status');el.forEach(x=>x.innerHTML=statusHtml())}
 function statusHtml(){
@@ -204,6 +214,14 @@ function authScreen(){
 function view(){
   switch(S.view){case 'pacientes':return vPacientes();case 'paciente':return vPaciente();case 'pagos':return vPagos();case 'config':return vConfig();default:return vAgenda()}
 }
+// No redibuja mientras alguien está escribiendo en un formulario de la página (se hace al salir del campo).
+let softPending=false;
+function renderSoft(){
+  const ae=document.activeElement;
+  if(ae&&ae.closest&&ae.closest('#main form[data-form]')&&/^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName)){softPending=true;renderStatus();return}
+  render();
+}
+document.addEventListener('focusout',()=>{if(softPending)setTimeout(()=>{const ae=document.activeElement;if(!(ae&&ae.closest&&ae.closest('#main form[data-form]'))){softPending=false;render()}},0)});
 let rendering=false;
 function render(){
   if(rendering)return;rendering=true;
@@ -578,7 +596,7 @@ document.addEventListener('click',async e=>{
     case 'chooseLocal':ST.mode='local';LS.set('mode','local');S.screen=null;await loadFromDevice();await seedBase();render();break;
     case 'resetMode':ST.mode='';LS.del('mode');S.screen='mode';render();break;
     case 'logout':openModal(`${mHead('¿Cerrar sesión?')}<div class="mb"><p style="margin:0">${ST.pending?`<b>Hay ${ST.pending} cambios que todavía no se subieron al servidor y se van a perder.</b> Conectate a internet y sincronizá antes de salir. `:''}Al cerrar sesión se borra la copia de los datos guardada en este equipo.</p></div><div class="mf"><button class="btn ghost" data-a="close">Cancelar</button><button class="btn primary" data-a="doLogout">Cerrar sesión</button></div>`);break;
-    case 'doLogout':{closeModal();try{await api('/api/logout',{})}catch(e){}ST.token='';ST.user=null;ST.since=0;ST.pending=0;['token','user','since','lastSync'].forEach(k=>LS.del(k));if(ST.idb){await idbClear('docs');await idbClear('outbox')}COLS.forEach(c=>S.data[c]={});S.screen='login';S.view='agenda';render();break}
+    case 'doLogout':{closeModal();if(ES){ES.close();ES=null}try{await api('/api/logout',{})}catch(e){}ST.token='';ST.user=null;ST.since=0;ST.pending=0;['token','user','since','lastSync'].forEach(k=>LS.del(k));if(ST.idb){await idbClear('docs');await idbClear('outbox')}COLS.forEach(c=>S.data[c]={});S.screen='login';S.view='agenda';render();break}
     case 'chgPass':openModal(`${mHead('Cambiar mi contraseña')}<form data-form="chgPass"><div class="mb"><label class="f">Contraseña actual<input type="password" id="cp_a" name="actual" required autocomplete="current-password"></label><label class="f">Nueva contraseña (mínimo 8)<input type="password" id="cp_n" name="nueva" minlength="8" required autocomplete="new-password"></label></div><div class="mf"><button type="button" class="btn ghost" data-a="close">Cancelar</button><button class="btn primary" type="submit">Guardar</button></div></form>`);break;
     case 'newUser':mUser();break;
     case 'editUser':mUser((S.users||[]).find(u=>u.id===id));break;
@@ -622,7 +640,7 @@ document.addEventListener('submit',async e=>{
   if(k==='setup'||k==='login'){
     try{const j=await api(k==='setup'?'/api/setup':'/api/login',d);ST.token=j.token;ST.user=j.user;LS.set('token',j.token);LS.set('user',j.user);
       if(ST.user.rol==='secretaria'||(window.agendaDesktop&&k==='setup')){S.cfgTab='conexion';if(window.agendaDesktop&&k==='setup')S.view='config'}
-      S.screen=null;if(ST.idb)await loadFromDevice();render();await sync();toast(`¡Hola ${ST.user.nombre}!`)}
+      S.screen=null;if(ST.idb)await loadFromDevice();render();await sync();connectLive();toast(`¡Hola ${ST.user.nombre}!`)}
     catch(err){toast(err.status?err.message:'No hay conexión con el servidor.','err')}
     return;
   }
@@ -757,7 +775,7 @@ async function boot(){
     try{const j=await api('/api/status');S.screen=j.needsSetup?'setup':'login'}catch(e){S.screen='login'}
     render();return;
   }
-  render();sync();
+  render();sync();connectLive();
 }
 window.addEventListener('online',()=>scheduleSync(300));
 window.addEventListener('offline',()=>{ST.sync='offline';renderStatus()});
