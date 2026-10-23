@@ -18,7 +18,19 @@ Un solo programa que funciona como **página web**, **app del celular** (instala
 
 Cada alta, cambio o borrado queda registrado con usuario y hora (Configuración › Registro de cambios). Las contraseñas se guardan cifradas (scrypt) y hay bloqueo temporal tras varios intentos fallidos.
 
-## 1. Poner el servidor en internet
+## Uso recomendado sin internet: computadora + celular por WiFi
+
+La app de escritorio puede hacer de servidor dentro del consultorio. No hace falta contratar nada ni subir datos de pacientes a internet.
+
+1. Instalá la app de escritorio en la computadora del consultorio (ver punto 3) y elegí **"En esta computadora y en el celular (por WiFi)"**.
+2. Creá la cuenta de administración.
+3. En Configuración › Conexión aparece un **código QR** y una dirección tipo `http://192.168.0.10:8080`.
+4. Con el celular conectado al **mismo WiFi**, escaneá el QR o escribí esa dirección, e ingresá con tu usuario.
+5. Para tenerla como app: Android › menú ⋮ › *Agregar a pantalla de inicio*; iPhone › Compartir › *Agregar a inicio*.
+
+Límites de este modo: la computadora tiene que estar prendida y con la agenda abierta, y el celular solo funciona dentro de ese WiFi. Si la dirección cambia (porque el router le asigna otra a la compu), la pantalla de Conexión muestra la nueva. Los datos quedan en la carpeta de la app en la computadora: hacé copias desde Configuración › Datos y copias.
+
+## 1. Poner el servidor en internet (opcional, para más adelante)
 
 Recomendado: un servidor virtual (VPS) chico, por ejemplo DigitalOcean, Hetzner o Vultr, desde unos 5 USD por mes, con un dominio (por ejemplo `agenda.drapaulinalopez.com.ar`).
 
@@ -43,6 +55,7 @@ Queda con su ícono, abre sin barra del navegador y funciona sin señal.
 Los instaladores se arman solos en GitHub: pestaña **Actions** → *Pruebas y app de escritorio* → *Run workflow* (o publicando un tag `v1.0.0`). Al terminar, descargá el instalador de Windows (`.exe`), Mac (`.dmg`) o Linux (`.AppImage`).
 
 Al abrirla por primera vez pregunta:
+- **En esta computadora y en el celular (por WiFi)**: ver arriba.
 - **Solo en este equipo**: funciona sin internet y los datos quedan en la computadora.
 - **Conectada a un servidor**: escribís la dirección del servidor e ingresás con tu usuario.
 

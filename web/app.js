@@ -190,6 +190,7 @@ function shell(){
 function authScreen(){
   const box=inner=>`<div class="auth"><div class="auth-card"><img src="logo-full.png" alt="Dra Paulina Lopez" class="auth-logo">${inner}</div></div>`;
   if(S.screen==='mode')return box(`<h2>¿Cómo vas a usar la agenda?</h2>
+    ${window.agendaDesktop?`<button class="choice" data-a="chooseLan"><b>En esta computadora y en el celular (por WiFi)</b><span>Recomendado. Esta computadora guarda los datos y el celular los usa cuando está conectado al mismo WiFi. No necesita internet.</span></button>`:''}
     <button class="choice" data-a="chooseLocal"><b>Solo en este equipo</b><span>Funciona sin internet. Los datos quedan guardados en esta computadora.</span></button>
     <form class="choice" data-form="chooseServer"><b>Conectada a un servidor</b><span>Los datos se comparten entre la computadora, el celular y la web, y también funciona sin conexión.</span>
       <label class="f">Dirección del servidor<input type="text" id="srvUrl" name="url" placeholder="https://agenda.midominio.com" value="${esc(ST.server)}" required></label>
@@ -299,7 +300,7 @@ function vPacientes(){
   <div class="panel" style="padding:6px 8px"><div class="table-wrap"><table><thead><tr><th>Paciente</th><th class="hide-sm">DNI</th><th class="hide-sm">Edad</th><th>Teléfono</th><th class="hide-sm">Obra social</th><th>Próximo turno</th></tr></thead><tbody>
   ${ps.map(p=>{const n=nextAppt(p.id);return `<tr class="click" data-a="openPac" data-id="${esc(p.id)}"><td><b>${esc(p.apellido)}, ${esc(p.nombre)}</b></td><td class="hide-sm num">${esc(p.dni)}</td><td class="hide-sm num">${age(p.nacimiento)??'—'}</td><td class="num">${esc(p.telefono)}</td><td class="hide-sm">${esc(p.obraSocial)}</td><td class="num">${n?`${fCorta(n.fecha)} ${esc(n.hora)}`:'<span class="muted">—</span>'}</td></tr>`}).join('')}
   </tbody></table>${ps.length?'':`<div class="empty">${S.q?'Ningún paciente coincide con la búsqueda.':'Todavía no cargaste pacientes. Tocá “Nuevo paciente” para crear la primera ficha.'}</div>`}</div></div>
-  <p class="small muted">${list('patients').length} pacientes en total.</p>`;
+  <p class="small muted">${list('patients').length===1?'1 paciente':list('patients').length+' pacientes'} en total.</p>`;
 }
 function kv(label,v){return `<div><dt>${label}</dt><dd>${v?esc(v):'<span class="muted">—</span>'}</dd></div>`}
 function vPaciente(){
@@ -567,6 +568,13 @@ document.addEventListener('click',async e=>{
       await del(col,id);toast('Eliminado');break}
     case 'backup':backup();break;
     case 'syncNow':if(ST.mode==='server'){scheduleSync(0);toast('Sincronizando…')}break;
+    case 'chooseLan':case 'localToLan':{
+      try{const info=await window.agendaDesktop.startLan();S.lan=info;
+        if(a==='localToLan'&&ST.idb){const rows=await idbAll('docs');await idbPutMany('outbox',rows.map(r=>({k:r.k,col:r.col,doc:r.doc})));ST.pending=rows.length}
+        ST.mode='server';ST.server=info.local;ST.token='';ST.since=0;LS.set('mode','server');LS.set('server',ST.server);LS.del('token');LS.set('since',0);
+        const j=await api('/api/status');S.screen=j.needsSetup?'setup':'login';S.cfgTab='conexion';render()}
+      catch(err){toast('No se pudo activar el modo compartido: '+(err.message||err),'err')}
+      break}
     case 'chooseLocal':ST.mode='local';LS.set('mode','local');S.screen=null;await loadFromDevice();await seedBase();render();break;
     case 'resetMode':ST.mode='';LS.del('mode');S.screen='mode';render();break;
     case 'logout':openModal(`${mHead('¿Cerrar sesión?')}<div class="mb"><p style="margin:0">${ST.pending?`<b>Hay ${ST.pending} cambios que todavía no se subieron al servidor y se van a perder.</b> Conectate a internet y sincronizá antes de salir. `:''}Al cerrar sesión se borra la copia de los datos guardada en este equipo.</p></div><div class="mf"><button class="btn ghost" data-a="close">Cancelar</button><button class="btn primary" data-a="doLogout">Cerrar sesión</button></div>`);break;
@@ -613,7 +621,7 @@ document.addEventListener('submit',async e=>{
   }
   if(k==='setup'||k==='login'){
     try{const j=await api(k==='setup'?'/api/setup':'/api/login',d);ST.token=j.token;ST.user=j.user;LS.set('token',j.token);LS.set('user',j.user);
-      if(ST.user.rol==='secretaria')S.cfgTab='conexion';
+      if(ST.user.rol==='secretaria'||(window.agendaDesktop&&k==='setup')){S.cfgTab='conexion';if(window.agendaDesktop&&k==='setup')S.view='config'}
       S.screen=null;if(ST.idb)await loadFromDevice();render();await sync();toast(`¡Hola ${ST.user.nombre}!`)}
     catch(err){toast(err.status?err.message:'No hay conexión con el servidor.','err')}
     return;
@@ -708,13 +716,27 @@ function mUser(u){
   ${!isNew?`<label class="row small" style="gap:8px"><input type="checkbox" id="us_act" name="activo" ${u.activo?'checked':''}> Usuario activo</label>`:''}
   </div></div><div class="mf"><button type="button" class="btn ghost" data-a="close">Cancelar</button><button type="submit" class="btn primary">Guardar</button></div></form>`);
 }
+function lanPanel(){
+  if(!window.agendaDesktop)return '';
+  const L=S.lan;
+  if(L===undefined){window.agendaDesktop.lanInfo().then(x=>{S.lan=x;render()}).catch(()=>{S.lan=null});return ''}
+  if(!L)return '';
+  return `<div class="panel"><h3>Usar en el celular</h3><div class="row" style="align-items:flex-start;gap:20px">${L.qr?`<img src="${L.qr}" alt="Código QR con la dirección de la agenda" width="180" height="180" style="border-radius:12px">`:''}
+    <div style="flex:1;min-width:220px;display:flex;flex-direction:column;gap:8px"><ol style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px">
+    <li>Conectá el celular al <b>mismo WiFi</b> que esta computadora.</li>
+    <li>Escaneá el código con la cámara o escribí en el navegador:<br><b class="num" style="font-size:1.1rem;user-select:all">${esc(L.urls[0]?L.urls[0].url:'(sin red WiFi)')}</b></li>
+    <li>Ingresá con tu usuario. En Android: menú ⋮ › <i>Agregar a pantalla de inicio</i>. En iPhone: Compartir › <i>Agregar a inicio</i>.</li></ol>
+    ${L.urls.length>1?`<p class="small muted" style="margin:0">Otras direcciones de esta compu: ${L.urls.slice(1).map(u=>esc(u.url)).join(' · ')}</p>`:''}
+    <p class="small muted" style="margin:0">Esta computadora tiene que estar prendida con la agenda abierta para que el celular funcione. Si Windows pregunta por el firewall, tocá <i>Permitir</i> en redes privadas.</p></div></div></div>`;
+}
 function vConexion(){
   if(ST.mode==='local')return `<div class="panel"><h3>Modo: solo en este equipo</h3><p>Los datos se guardan en esta computadora o navegador y funcionan sin internet. Hacé copias de seguridad seguido.</p>
+    ${window.agendaDesktop?`<p><button class="btn primary" data-a="localToLan">Compartir con el celular por WiFi</button></p><p class="small muted">Lo que ya cargaste se pasa al modo compartido y vas a crear un usuario y contraseña.</p>`:''}
     <p class="small muted">Si más adelante tienen un servidor, podés conectar este equipo: todo lo que cargaste se sube automáticamente.</p>
     <form class="row" data-form="toServer"><input type="text" id="tsUrl" name="url" placeholder="https://agenda.midominio.com" style="max-width:360px" required><button class="btn primary" type="submit">Conectar y subir datos</button></form></div>`;
   return `<div class="panel"><h3>Conectada al servidor</h3><dl class="kv">${kv('Servidor',ST.server)}${kv('Usuario',ST.user&&`${ST.user.nombre} (${ST.user.email})`)}${kv('Última sincronización',ST.lastSync?new Date(ST.lastSync).toLocaleString('es-AR'):'')}${kv('Cambios por subir',String(ST.pending))}</dl>
     <p class="small muted">La agenda funciona aunque no haya internet: los cambios quedan guardados en este equipo y se suben solos cuando vuelve la conexión.</p>
-    <div class="row"><button class="btn" data-a="syncNow">Sincronizar ahora</button><button class="btn" data-a="chgPass">Cambiar mi contraseña</button><button class="btn danger" data-a="logout">Cerrar sesión</button></div></div>`;
+    <div class="row"><button class="btn" data-a="syncNow">Sincronizar ahora</button>${window.agendaDesktop?`<button class="btn" data-a="resetMode">Cambiar modo de uso</button>`:''}<button class="btn" data-a="chgPass">Cambiar mi contraseña</button><button class="btn danger" data-a="logout">Cerrar sesión</button></div></div>${/localhost|127\.0\.0\.1/.test(ST.server)?lanPanel():''}`;
 }
 
 /* ---------- inicio ---------- */
@@ -740,7 +762,7 @@ async function boot(){
 window.addEventListener('online',()=>scheduleSync(300));
 window.addEventListener('offline',()=>{ST.sync='offline';renderStatus()});
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')scheduleSync(300)});
-setInterval(()=>scheduleSync(0),30000);
+setInterval(()=>scheduleSync(0),15000);
 setInterval(()=>{if(S.view==='agenda'&&!$('#modal')&&!S.screen)render()},60000);
 if('serviceWorker' in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('sw.js').catch(()=>{});
 boot();

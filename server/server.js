@@ -5,17 +5,21 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const { DatabaseSync } = require('node:sqlite');
+// Base de datos: node:sqlite (Node 22.13+) o better-sqlite3 (app de escritorio).
+function openDb(file) {
+  try { const { DatabaseSync } = require('node:sqlite'); return new DatabaseSync(file); }
+  catch (e) { const Database = require('better-sqlite3'); return new Database(file); }
+}
 
 const PORT = Number(process.env.PORT || 8080);
-const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
-const WEB_DIR = path.join(__dirname, '..', 'web');
+const DATA_DIR = process.env.AGENDA_DATA_DIR || process.env.DATA_DIR || path.join(__dirname, '..', 'data');
+const WEB_DIR = process.env.AGENDA_WEB_DIR || path.join(__dirname, '..', 'web');
 const TOKEN_DAYS = Number(process.env.TOKEN_DAYS || 30);
 const COLS = ['professionals', 'locations', 'patients', 'appointments', 'sessions', 'payments', 'config'];
 const ROLES = ['admin', 'medico', 'secretaria'];
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
-const db = new DatabaseSync(path.join(DATA_DIR, 'agenda.sqlite'));
+const db = openDb(path.join(DATA_DIR, 'agenda.sqlite'));
 db.exec(`
 PRAGMA journal_mode=WAL;
 CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY, nombre TEXT, email TEXT UNIQUE COLLATE NOCASE, pass TEXT, rol TEXT, activo INTEGER DEFAULT 1, profesionalId TEXT, creado TEXT);
@@ -263,4 +267,4 @@ const server = http.createServer(async (req, res) => {
 if (require.main === module) {
   server.listen(PORT, () => console.log(`Agenda lista en http://localhost:${PORT}  (datos en ${DATA_DIR})`));
 }
-module.exports = { server, db };
+module.exports = { server, db, DATA_DIR };
