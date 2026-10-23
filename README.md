@@ -30,7 +30,19 @@ La app de escritorio puede hacer de servidor dentro del consultorio. No hace fal
 
 Límites de este modo: la computadora tiene que estar prendida y con la agenda abierta, y el celular solo funciona dentro de ese WiFi. Si la dirección cambia (porque el router le asigna otra a la compu), la pantalla de Conexión muestra la nueva. Los datos quedan en la carpeta de la app en la computadora: hacé copias desde Configuración › Datos y copias.
 
-## 1. Poner el servidor en internet (opcional, para más adelante)
+## Versión web en internet con Railway (lo más simple, sin comandos)
+
+1. Hacé el Merge de las PR pendientes: Railway publica lo que está en `main`.
+2. Entrá a [railway.com](https://railway.com) e ingresá con tu cuenta de GitHub.
+3. **New Project › Deploy from GitHub repo** y elegí `webmed` (si no aparece, tocá *Configure GitHub App* y dale acceso a ese repositorio). Railway detecta el `Dockerfile` solo.
+4. En el servicio, agregá un **Volume** (disco) con *Mount path* `/data`. Ahí se guardan los datos. Sin esto se borrarían en cada actualización.
+5. En **Settings › Networking** tocá **Generate Domain**. Te da una dirección tipo `https://webmed-production.up.railway.app`.
+6. Abrí esa dirección y creá la cuenta de administración. Después, en Configuración › Usuarios, creá los demás.
+7. En cada PC y celular, abrí la dirección e instalala desde el navegador (Chrome: ícono *Instalar*; iPhone: Compartir › *Agregar a inicio*).
+
+Costo: Railway da 5 USD de prueba gratis; después el plan Hobby cuesta 5 USD por mes, y el disco cuesta 0,15 USD por GB al mes. Cada vez que se actualiza `main`, Railway se actualiza solo. Para usar un dominio propio: Settings › Networking › *Custom Domain*.
+
+## 1. Poner el servidor en un VPS propio (alternativa avanzada)
 
 Recomendado: un servidor virtual (VPS) chico, por ejemplo DigitalOcean, Hetzner o Vultr, desde unos 5 USD por mes, con un dominio (por ejemplo `agenda.drapaulinalopez.com.ar`).
 

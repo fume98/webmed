@@ -89,9 +89,9 @@ function readJson(req) {
     req.on('error', reject);
   });
 }
-function authUser(req) {
+function authUser(req, queryToken) {
   const h = req.headers.authorization || '';
-  const tok = h.startsWith('Bearer ') ? h.slice(7) : '';
+  const tok = h.startsWith('Bearer ') ? h.slice(7) : (queryToken || '');
   if (!tok) return null;
   const t = db.prepare('SELECT * FROM tokens WHERE hash=?').get(sha(tok));
   if (!t) return null;
@@ -177,6 +177,7 @@ const routes = {
         audit(u.id, deleted ? 'eliminó' : cur ? 'modificó' : 'creó', col, doc.id);
       }
       db.exec('COMMIT');
+      if (changes.length) notify();
     } catch (e) { db.exec('ROLLBACK'); throw e; }
     const rows = db.prepare('SELECT col,id,data,deleted,seq FROM docs WHERE seq>? ORDER BY seq LIMIT 5000').all(since);
     const out = [];
@@ -244,9 +245,31 @@ function serveStatic(req, res, pathname) {
   fs.createReadStream(file).pipe(res);
 }
 
+/* ---------- tiempo real: avisa a los equipos conectados cuando hay cambios ---------- */
+const listeners = new Set();
+let notifyTimer = null;
+function notify() {
+  clearTimeout(notifyTimer);
+  notifyTimer = setTimeout(() => {
+    const r = db.prepare('SELECT v FROM meta WHERE k=?').get('seq');
+    const msg = `event: cambio\ndata: ${r ? r.v : 0}\n\n`;
+    for (const l of listeners) { try { l.write(msg); } catch (e) { listeners.delete(l); } }
+  }, 150);
+}
+setInterval(() => { for (const l of listeners) { try { l.write(': ping\n\n'); } catch (e) { listeners.delete(l); } } }, 25000).unref();
+function events(req, res, url) {
+  const u = authUser(req, url.searchParams.get('token'));
+  if (!u) return send(res, 401, { error: 'Tu sesión venció. Volvé a ingresar.' });
+  res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive', 'X-Accel-Buffering': 'no', 'Access-Control-Allow-Origin': '*' });
+  res.write('retry: 3000\n\n');
+  listeners.add(res);
+  req.on('close', () => listeners.delete(res));
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
   if (req.method === 'OPTIONS') return send(res, 204, '');
+  if (req.method === 'GET' && url.pathname === '/api/events') return events(req, res, url);
   if (!url.pathname.startsWith('/api/')) return serveStatic(req, res, url.pathname);
   try {
     const key = req.method + ' ' + url.pathname;
