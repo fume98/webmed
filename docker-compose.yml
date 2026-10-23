@@ -1,0 +1,18 @@
+# Servidor + certificado HTTPS automático con Caddy.
+# Cambiá agenda.midominio.com por tu dominio y ejecutá: docker compose up -d
+services:
+  agenda:
+    build: .
+    restart: unless-stopped
+    volumes:
+      - agenda_data:/data
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    command: caddy reverse-proxy --from agenda.midominio.com --to agenda:8080
+    volumes:
+      - caddy_data:/data
+volumes:
+  agenda_data:
+  caddy_data:

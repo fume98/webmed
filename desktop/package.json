@@ -1,0 +1,56 @@
+{
+  "name": "agenda-dra-paulina-lopez",
+  "productName": "Agenda Dra Paulina Lopez",
+  "version": "1.1.0",
+  "description": "Agenda de turnos, fichas de pacientes, historia clínica y pagos.",
+  "main": "main.js",
+  "author": "Dra Paulina Lopez",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "copy-web": "node -e \"const fs=require('fs');fs.cpSync('../web','web',{recursive:true});fs.mkdirSync('server',{recursive:true});fs.cpSync('../server/server.js','server/server.js')\"",
+    "start": "npm run copy-web && electron .",
+    "dist": "npm run copy-web && electron-builder",
+    "dist:win": "npm run copy-web && electron-builder --win",
+    "dist:mac": "npm run copy-web && electron-builder --mac",
+    "dist:linux": "npm run copy-web && electron-builder --linux"
+  },
+  "devDependencies": {
+    "electron": "37.2.0",
+    "electron-builder": "25.1.8"
+  },
+  "build": {
+    "appId": "ar.drapaulinalopez.agenda",
+    "productName": "Agenda Dra Paulina Lopez",
+    "files": [
+      "main.js",
+      "preload.js",
+      "web/**/*",
+      "server/**/*"
+    ],
+    "icon": "web/icon-512.png",
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "Agenda Dra Paulina Lopez"
+    },
+    "mac": {
+      "target": "dmg",
+      "category": "public.app-category.medical"
+    },
+    "linux": {
+      "target": "AppImage",
+      "category": "Office"
+    },
+    "asarUnpack": [
+      "**/*.node"
+    ]
+  },
+  "dependencies": {
+    "better-sqlite3": "12.2.0",
+    "qrcode": "1.5.4"
+  }
+}
