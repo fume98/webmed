@@ -37,11 +37,12 @@ const I={ // iconos de trazo fino
   x:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>',
   wa:'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.2A9.7 9.7 0 0 0 3.6 16.8L2.3 21.7l5-1.3A9.7 9.7 0 1 0 12 2.2Zm0 17.7c-1.5 0-3-.4-4.2-1.2l-.3-.2-3 .8.8-2.9-.2-.3A8 8 0 1 1 12 19.9Zm4.4-6c-.2-.1-1.4-.7-1.7-.8-.2-.1-.4-.1-.5.1l-.8 1c-.1.2-.3.2-.5.1a6.6 6.6 0 0 1-3.3-2.9c-.2-.4.2-.4.7-1.3.1-.1 0-.3 0-.4l-.8-1.8c-.2-.5-.4-.4-.5-.4h-.5a.9.9 0 0 0-.7.3 2.8 2.8 0 0 0-.9 2.1c0 1.2.9 2.4 1 2.6.1.2 1.8 2.7 4.3 3.8 1.6.7 2.2.7 3 .6.5-.1 1.4-.6 1.6-1.2.2-.6.2-1.1.1-1.2l-.5-.4Z"/></svg>',
   edit:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 20h4L19 9l-4-4L4 16v4Z"/></svg>',
+  mail:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><rect x="3" y="5.5" width="18" height="13" rx="2.5"/><path d="m4 7 8 6 8-6"/></svg>',
   back:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M19 12H5M11 6l-6 6 6 6"/></svg>',
 };
 
 /* ---------- datos ---------- */
-const COLS=['professionals','locations','patients','appointments','sessions','payments','config'];
+const COLS=['professionals','locations','patients','appointments','sessions','payments','config','attachments'];
 const S={mode:'loading',data:Object.fromEntries(COLS.map(c=>[c,{}])),ready:new Set(),
   view:'agenda',date:today(),calMode:'semana',fPro:'',fLoc:'',q:'',pacId:null,pacTab:'datos',
   payMonth:today().slice(0,7),payMet:'',payPro:'',cfgTab:'profesionales',screen:null,loading:true,users:null,audit:null};
@@ -62,7 +63,7 @@ const LS={get(k,d){try{const v=localStorage.getItem('pl_'+k);return v==null?d:JS
 const ST={mode:LS.get('mode',''),server:LS.get('server',''),token:LS.get('token',''),user:LS.get('user',null),since:LS.get('since',0),
   sync:'idle',lastSync:LS.get('lastSync',''),pending:0,syncing:false,timer:null,idb:null};
 const IS_DESKTOP=!!(window.agendaDesktop)||location.protocol==='file:';
-function idbOpen(){return new Promise((res,rej)=>{if(!('indexedDB' in window))return rej(new Error('Sin IndexedDB'));const r=indexedDB.open('agenda-pl',1);r.onupgradeneeded=()=>{const d=r.result;d.createObjectStore('docs',{keyPath:'k'});d.createObjectStore('outbox',{keyPath:'k'})};r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)})}
+function idbOpen(){return new Promise((res,rej)=>{if(!('indexedDB' in window))return rej(new Error('Sin IndexedDB'));const r=indexedDB.open('agenda-pl',2);r.onupgradeneeded=()=>{const d=r.result;for(const n of ['docs','outbox','blobs'])if(!d.objectStoreNames.contains(n))d.createObjectStore(n,{keyPath:'k'})};r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)})}
 function idbTx(store,mode,fn){return new Promise((res,rej)=>{const tx=ST.idb.transaction(store,mode);const s=tx.objectStore(store);const out=fn(s);tx.oncomplete=()=>res(out&&out.result!==undefined?out.result:undefined);tx.onerror=()=>rej(tx.error)})}
 const idbAll=store=>new Promise((res,rej)=>{const r=ST.idb.transaction(store).objectStore(store).getAll();r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)});
 const idbPutMany=(store,vals)=>idbTx(store,'readwrite',s=>{vals.forEach(v=>s.put(v))});
@@ -80,14 +81,14 @@ async function persist(col,doc,deleted){
     if(ST.mode==='server'){await idbPutMany('outbox',[{k,col,doc:deleted?{id:doc.id,_deleted:true,updatedAt:new Date().toISOString()}:doc}]);ST.pending++;scheduleSync(250)}
   }catch(e){toast('No se pudo guardar en este equipo','err')}
 }
-async function save(col,obj){
+async function save(col,obj,quiet){
   const now=new Date().toISOString();
   obj={...obj,updatedAt:now,createdAt:obj.createdAt||now};
-  S.data[col][obj.id]=obj;render();
+  S.data[col][obj.id]=obj;if(quiet)renderStatus();else render();
   await persist(col,obj,false);
   return obj;
 }
-async function del(col,id){delete S.data[col][id];render();await persist(col,{id},true)}
+async function del(col,id){delete S.data[col][id];render();await persist(col,{id},true);if(col==='attachments')blobDel(id)}
 
 const api=async(p,body,method)=>{
   const r=await fetch(ST.server.replace(/\/$/,'')+p,{method:method||(body?'POST':'GET'),headers:{'Content-Type':'application/json',...(ST.token?{Authorization:'Bearer '+ST.token}:{})},body:body?JSON.stringify(body):undefined});
@@ -108,7 +109,7 @@ function connectLive(){
 function scheduleSync(ms){clearTimeout(ST.timer);ST.timer=setTimeout(sync,ms)}
 async function sync(){
   if(ST.mode!=='server'||!ST.token||ST.syncing)return;
-  if(navigator.onLine===false){ST.sync='offline';render();return}
+  if(navigator.onLine===false){ST.sync='offline';renderSoft();return}
   ST.syncing=true;ST.sync='syncing';renderStatus();
   try{
     let more=true,guard=0;
@@ -121,12 +122,13 @@ async function sync(){
       await idbDelMany('outbox',done);const pend=new Set(now.filter(b=>!done.includes(b.k)).map(b=>b.k));
       const puts=[],dels=[];
       for(const ch of j.changes){const k=ch.col+'/'+ch.doc.id;if(pend.has(k)||!S.data[ch.col])continue;
-        if(ch.doc._deleted){delete S.data[ch.col][ch.doc.id];dels.push(k)}else{S.data[ch.col][ch.doc.id]=ch.doc;puts.push({k,col:ch.col,doc:ch.doc})}}
+        if(ch.doc._deleted){delete S.data[ch.col][ch.doc.id];dels.push(k);if(ch.col==='attachments')blobDel(ch.doc.id)}else{S.data[ch.col][ch.doc.id]=ch.doc;puts.push({k,col:ch.col,doc:ch.doc})}}
       if(puts.length)await idbPutMany('docs',puts);if(dels.length)await idbDelMany('docs',dels);
       ST.since=j.since;LS.set('since',ST.since);
       if(j.rejected&&j.rejected.length){toast('Algunos cambios no se guardaron porque tu usuario no tiene permiso.','err');ST.since=0;LS.set('since',0)}
       ST.pending=pend.size;more=!!j.more||(j.rejected&&j.rejected.length&&guard<2);
     }
+    await uploadBlobs();
     ST.sync='ok';ST.lastSync=new Date().toISOString();LS.set('lastSync',ST.lastSync);
     await seedBase();
   }catch(e){
@@ -168,16 +170,165 @@ function waPhone(raw){
 }
 function fillTpl(t,a){
   const p=get('patients',a.pacienteId)||{},pr=get('professionals',a.profesionalId)||{},l=get('locations',a.lugarId)||{};
-  const map={nombre:p.nombre||'',apellido:p.apellido||'',profesional:pr.nombre||'',especialidad:pr.especialidad||'',fecha:fLarga(a.fecha),hora:a.hora||'',lugar:l.nombre||'',direccion:[l.direccion,l.ciudad].filter(Boolean).join(', '),motivo:a.motivo||''};
+  const map={nombre:p.nombre||'',apellido:p.apellido||'',profesional:pr.nombre||'',especialidad:pr.especialidad||'',fecha:fLarga(a.fecha),hora:a.hora||'',lugar:l.nombre||'',direccion:[l.direccion,l.ciudad].filter(Boolean).join(', '),motivo:a.motivo||'',calendario:gcalLink(a)};
   return t.replace(/\{(\w+)\}/g,(m,k)=>k in map?map[k]:m);
 }
-function msgTurno(a){return fillTpl(cfg().waTemplate,a)}
+function msgTurno(a,cal){const t=cfg().waTemplate||'';return fillTpl(t,a)+(cal!==false&&!t.includes('{calendario}')?calLine(a):'')}
 function msgProximos(pid){
   const p=get('patients',pid)||{};
   const ts=list('appointments').filter(a=>a.pacienteId===pid&&a.fecha>=today()&&a.estado!=='cancelado').sort((a,b)=>(a.fecha+a.hora).localeCompare(b.fecha+b.hora));
   if(!ts.length)return '';
   const lines=ts.map(a=>{const l=get('locations',a.lugarId)||{},pr=get('professionals',a.profesionalId)||{};return `• ${cap(fLarga(a.fecha))}, ${a.hora} hs — ${l.nombre||''}${pr.nombre?' con '+pr.nombre:''}`});
   return `¡Hola ${p.nombre||''}! 🌿 Te compartimos tus próximos turnos:\n\n${lines.join('\n')}\n\nAnte cualquier cambio, avisanos por este medio. ¡Te esperamos!`;
+}
+
+/* ---------- Google Calendar y mail ---------- */
+// Link "agregar a Google Calendar": el paciente lo toca y el turno queda en su calendario.
+function gcalLink(a){
+  const pr=get('professionals',a.profesionalId)||{},l=get('locations',a.lugarId)||{};
+  const st=toMin(a.hora),en=st+(+a.duracion||30),d=String(a.fecha||'').replace(/-/g,'');
+  const t=m=>`${d}T${pad(Math.floor(m/60))}${pad(m%60)}00`;
+  const q=new URLSearchParams({action:'TEMPLATE',text:`Turno con ${pr.nombre||'la doctora'}`,dates:`${t(st)}/${t(en)}`,ctz:'America/Argentina/Buenos_Aires',
+    details:a.motivo?'Motivo: '+a.motivo:'',
+    location:[l.nombre,l.direccion,l.ciudad].filter(Boolean).join(', ')});
+  return 'https://calendar.google.com/calendar/render?'+q.toString();
+}
+const calLine=a=>'\n\n📅 Agendalo en tu Google Calendar: '+gcalLink(a);
+function mailLink(to,subject,body){
+  const coarse=window.matchMedia&&matchMedia('(pointer:coarse)').matches;
+  if(coarse)return `mailto:${encodeURIComponent(to||'')}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  return 'https://mail.google.com/mail/?'+new URLSearchParams({view:'cm',fs:'1',to:to||'',su:subject,body}).toString();
+}
+
+/* ---------- guardado automático (historia clínica y mensaje del turno) ---------- */
+// Lo que se escribe queda en un borrador y se guarda solo al dejar de escribir.
+// Aunque la pantalla se actualice (por la sincronización), el texto no se pierde.
+const DRAFT={},AUTOST={};
+const draftKey=f=>f.dataset.form+':'+(f.dataset.key||'');
+function applyDrafts(){
+  document.querySelectorAll('form[data-auto]').forEach(f=>{
+    const d=DRAFT[draftKey(f)];if(!d){autoState(f,AUTOST[draftKey(f)]);return}
+    for(const [id,v] of Object.entries(d.vals)){const el=document.getElementById(id);if(el&&el.value!==v)el.value=v}
+    autoState(f,d.state);if(f.dataset.form==='wa')waPreview();
+  });
+}
+function autoState(f,st){if(f)AUTOST[draftKey(f)]=st;const el=f&&f.querySelector('.autosave');if(!el)return;el.textContent={wait:'Escribiendo…',saving:'Guardando…',ok:'Guardado ✓',err:'No se pudo guardar'}[st]||'Se guarda solo';el.dataset.st=st||''}
+function draftInput(f,t){
+  const k=draftKey(f);const d=DRAFT[k]||(DRAFT[k]={vals:{},ver:0,form:f.dataset.form,key:f.dataset.key||''});
+  d.vals[t.id]=t.value;d.ver++;d.state='wait';autoState(f,'wait');
+  clearTimeout(d.timer);d.timer=setTimeout(()=>autoSave(k),1200);
+}
+async function autoSave(k){
+  const d=DRAFT[k];if(!d)return;clearTimeout(d.timer);
+  const ver=d.ver,vals={...d.vals};const f=()=>document.querySelector(`form[data-auto][data-form="${d.form}"]`);
+  d.state='saving';autoState(f(),'saving');
+  try{
+    if(d.form==='hc'){
+      const p=get('patients',d.key);if(!p)return;const hc={...(p.hc||{})};
+      for(const [id,v] of Object.entries(vals))hc[id.replace(/^hc_/,'')]=v;
+      await save('patients',{...p,hc,hcUpdated:new Date().toISOString()},true);
+    }else if(d.form==='wa'){await save('config',{...cfg(),id:'main',waTemplate:vals.waTpl},true)}
+    d.state='ok';AUTOST[k]='ok';if(DRAFT[k]&&DRAFT[k].ver===ver)delete DRAFT[k];autoState(f(),DRAFT[k]?DRAFT[k].state:'ok');
+  }catch(e){d.state='err';AUTOST[k]='err';autoState(f(),'err')}
+}
+function flushDrafts(){for(const k of Object.keys(DRAFT))autoSave(k)}
+function waPreview(){const t=$('#waTpl'),b=$('#waTplPrev');if(t&&b&&b.dataset.id){const a=get('appointments',b.dataset.id);if(a)b.textContent=fillTpl(t.value,a)}}
+
+/* ---------- documentos adjuntos de cada sesión ---------- */
+// La ficha (nombre, tipo, sesión) se sincroniza como cualquier dato; el archivo se guarda
+// en el equipo y, en modo servidor, se sube al servidor.
+const URLS=new Map();
+const fmtSize=n=>n>1048576?(n/1048576).toFixed(1).replace('.',',')+' MB':Math.max(1,Math.round(n/1024))+' KB';
+const isImg=t=>/^image\//.test(t||'');
+async function blobGet(id){
+  if(ST.idb){try{const r=await new Promise((res,rej)=>{const q=ST.idb.transaction('blobs').objectStore('blobs').get(id);q.onsuccess=()=>res(q.result);q.onerror=()=>rej(q.error)});if(r)return r.blob}catch(e){}}
+  if(ST.mode==='server'&&ST.token){
+    const r=await fetch(ST.server.replace(/\/$/,'')+'/api/files/'+encodeURIComponent(id),{headers:{Authorization:'Bearer '+ST.token}});
+    if(!r.ok)throw Object.assign(new Error('No disponible'),{status:r.status});
+    const b=await r.blob();if(ST.idb)await idbPutMany('blobs',[{k:id,blob:b,up:true}]).catch(()=>{});return b;
+  }
+  throw new Error('No disponible');
+}
+async function blobUrl(id){if(URLS.has(id))return URLS.get(id);const u=URL.createObjectURL(await blobGet(id));URLS.set(id,u);return u}
+function blobDel(id){if(URLS.has(id)){URL.revokeObjectURL(URLS.get(id));URLS.delete(id)}if(ST.idb)idbDelMany('blobs',[id]).catch(()=>{})}
+async function uploadBlobs(){
+  if(ST.mode!=='server'||!ST.idb)return;
+  const rows=(await idbAll('blobs')).filter(r=>!r.up);
+  for(const r of rows){
+    if(!get('attachments',r.k)){continue}
+    const res=await fetch(ST.server.replace(/\/$/,'')+'/api/files/'+encodeURIComponent(r.k),{method:'PUT',headers:{Authorization:'Bearer '+ST.token,'Content-Type':r.blob.type||'application/octet-stream'},body:r.blob});
+    if(!res.ok){if(res.status===401)throw Object.assign(new Error('auth'),{status:401});continue}
+    await idbPutMany('blobs',[{...r,up:true}]);
+  }
+}
+function hydrateThumbs(){
+  document.querySelectorAll('img[data-att]:not([src])').forEach(img=>{blobUrl(img.dataset.att).then(u=>{img.src=u}).catch(()=>{img.closest('.att')&&img.closest('.att').classList.add('missing')})});
+}
+const FILE_ICON='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5Z"/><path d="M14 3v5h5"/></svg>';
+function attTile(x,removable){
+  return `<div class="att" title="${esc(x.nombre)}"><button type="button" class="att-open" data-a="openAtt" data-id="${esc(x.id)}">${isImg(x.tipo)?`<img data-att="${esc(x.id)}" alt="${esc(x.nombre)}">`:`<span class="att-ic">${FILE_ICON}<small>${esc((x.nombre.split('.').pop()||'').slice(0,5).toUpperCase())}</small></span>`}<span class="att-n">${esc(x.nombre)}</span></button>${removable?`<button type="button" class="att-x" data-a="rmAtt" data-id="${esc(x.id)}" aria-label="Quitar ${esc(x.nombre)}">×</button>`:''}</div>`;
+}
+const sesAtts=id=>list('attachments').filter(x=>x.sesionId===id).sort((a,b)=>(a.createdAt||'').localeCompare(b.createdAt||''));
+// Adjuntos que se están cargando en la ventana de la sesión (se guardan al tocar "Guardar sesión")
+let PEND={ses:null,add:[],rm:new Set()};
+function renderPendAtts(){
+  const box=$('#seAtts');if(!box)return;
+  const cur=sesAtts(PEND.ses).filter(x=>!PEND.rm.has(x.id));
+  const all=[...cur,...PEND.add.map(x=>x.meta)];
+  box.innerHTML=all.length?all.map(x=>attTile(x,true)).join(''):'<p class="small muted" style="margin:0">Sin documentos. Podés adjuntar estudios, recetas, consentimientos o fotos.</p>';
+  PEND.add.forEach(x=>{const img=box.querySelector(`img[data-att="${x.meta.id}"]`);if(img){if(!URLS.has(x.meta.id))URLS.set(x.meta.id,URL.createObjectURL(x.blob));img.src=URLS.get(x.meta.id)}});
+  hydrateThumbs();
+}
+function loadImg(file){return new Promise((res,rej)=>{const u=URL.createObjectURL(file);const im=new Image();im.onload=()=>{URL.revokeObjectURL(u);res(im)};im.onerror=()=>{URL.revokeObjectURL(u);rej(new Error('img'))};im.src=u})}
+// Achica las fotos y, si es un documento escaneado, lo pasa a blanco y negro con más contraste.
+async function prepImage(file,doc){
+  const im=await loadImg(file);const max=2000,k=Math.min(1,max/Math.max(im.naturalWidth,im.naturalHeight));
+  const c=document.createElement('canvas');c.width=Math.round(im.naturalWidth*k);c.height=Math.round(im.naturalHeight*k);
+  const g=c.getContext('2d');g.drawImage(im,0,0,c.width,c.height);
+  if(doc){
+    const d=g.getImageData(0,0,c.width,c.height),px=d.data,h=new Array(256).fill(0);
+    for(let i=0;i<px.length;i+=4){const y=(px[i]*.299+px[i+1]*.587+px[i+2]*.114)|0;px[i]=y;h[y]++}
+    const tot=px.length/4;let lo=0,hi=255,acc=0;for(;lo<255;lo++){acc+=h[lo];if(acc>tot*.02)break}acc=0;for(;hi>0;hi--){acc+=h[hi];if(acc>tot*.25)break}
+    if(hi-lo<40){lo=Math.max(0,lo-20);hi=Math.min(255,hi+20)}
+    for(let i=0;i<px.length;i+=4){let v=(px[i]-lo)*255/(hi-lo);v=v<0?0:v>255?255:v;px[i]=px[i+1]=px[i+2]=v}
+    g.putImageData(d,0,0);
+  }
+  return await new Promise(r=>c.toBlob(r,'image/jpeg',.85));
+}
+async function addFiles(files,scan){
+  const MAX=15*1024*1024;
+  for(const file of files){
+    try{
+      let blob=file,tipo=file.type||'application/octet-stream',nombre=file.name||'documento';
+      if(isImg(tipo)&&!/gif|svg/.test(tipo)){
+        try{const doc=scan&&!!($('#seDoc')&&$('#seDoc').checked);blob=await prepImage(file,doc);tipo='image/jpeg';
+          if(scan)nombre=`Escaneo ${fCorta(today()).replace(/\//g,'-')} ${new Date().toTimeString().slice(0,5).replace(':','.')}.jpg`;else nombre=nombre.replace(/\.\w+$/,'')+'.jpg'}
+        catch(e){blob=file}
+      }
+      if(blob.size>MAX){toast(`"${nombre}" pesa más de 15 MB`,'err');continue}
+      const meta={id:uid('adj'),nombre,tipo,tam:blob.size,fecha:today()};
+      PEND.add.push({meta,blob});
+    }catch(e){toast('No se pudo agregar '+(file.name||'el archivo'),'err')}
+  }
+  renderPendAtts();
+}
+async function commitAtts(sesId,pacId){
+  for(const id of PEND.rm){const x=get('attachments',id);if(x)await del('attachments',id)}
+  for(const x of PEND.add){
+    if(ST.idb)await idbPutMany('blobs',[{k:x.meta.id,blob:x.blob,up:false}]);
+    await save('attachments',{...x.meta,pacienteId:pacId,sesionId:sesId},true);
+  }
+  const n=PEND.add.length;PEND={ses:null,add:[],rm:new Set()};if(n&&ST.mode==='server')scheduleSync(100);
+}
+async function openAtt(id){
+  const x=get('attachments',id)||(PEND.add.find(p=>p.meta.id===id)||{}).meta;if(!x)return;
+  let u;try{u=await blobUrl(id)}catch(e){toast(e.status===404?'El archivo todavía no se subió desde el otro equipo.':'No se pudo abrir el archivo (¿sin conexión?)','err');return}
+  if(isImg(x.tipo)){
+    const v=document.createElement('div');v.className='viewer';v.id='viewer';
+    v.innerHTML=`<div class="viewer-bar"><span>${esc(x.nombre)}</span><span class="grow"></span><a class="btn sm" href="${u}" download="${esc(x.nombre)}">Descargar</a><button class="btn sm" data-a="closeViewer">${I.x}</button></div><img src="${u}" alt="${esc(x.nombre)}">`;
+    document.body.appendChild(v);return;
+  }
+  const a=document.createElement('a');a.href=u;a.target='_blank';a.rel='noopener';if(!/pdf/.test(x.tipo))a.download=x.nombre;document.body.appendChild(a);a.click();a.remove();
 }
 
 /* ---------- render principal ---------- */
@@ -228,6 +379,7 @@ function render(){
   const ae=document.activeElement,fid=ae&&ae.id,ss=ae&&'selectionStart' in ae?ae.selectionStart:null;
   const sy=window.scrollY,calSc=$('.cal')?.scrollLeft;
   $('#root').innerHTML=shell();
+  applyDrafts();hydrateThumbs();
   if(fid){const el=document.getElementById(fid);if(el&&!el.closest('.modal')){el.focus();try{if(ss!=null)el.setSelectionRange(ss,ss)}catch(e){}}}
   window.scrollTo(0,sy);if(calSc&&$('.cal'))$('.cal').scrollLeft=calSc;
   try{localStorage.setItem('pl_ui',JSON.stringify({view:S.view,calMode:S.calMode}))}catch(e){}
@@ -337,13 +489,13 @@ function vPaciente(){
   }else if(S.pacTab==='hc'){
     const h=p.hc||{};
     const F=(k,l)=>`<label class="f ${['motivo','observaciones','diagnostico'].includes(k)?'full':''}">${l}<textarea id="hc_${k}" name="${k}" rows="3">${esc(h[k])}</textarea></label>`;
-    body=`<form class="panel" data-form="hc"><div class="row" style="justify-content:space-between;margin-bottom:14px"><h3>Historia clínica</h3><span class="small muted">${p.hcUpdated?'Última edición '+fCorta(p.hcUpdated.slice(0,10)):''}</span></div>
+    body=`<form class="panel" data-form="hc" data-auto data-key="${esc(p.id)}"><div class="row" style="justify-content:space-between;margin-bottom:14px"><h3>Historia clínica</h3><span class="small muted">${p.hcUpdated?'Última edición '+fCorta(p.hcUpdated.slice(0,10)):''}</span></div>
     <div class="fgrid">${F('motivo','Motivo de consulta')}${F('personales','Antecedentes personales')}${F('familiares','Antecedentes familiares')}${F('alergias','Alergias')}${F('medicacion','Medicación habitual')}${F('cirugias','Cirugías / internaciones')}${F('habitos','Hábitos (tabaco, alcohol, actividad física)')}${F('diagnostico','Diagnóstico')}${F('observaciones','Observaciones')}</div>
-    <div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn primary" type="submit">Guardar historia clínica</button></div></form>`;
+    <div class="row" style="justify-content:flex-end;margin-top:14px"><span class="autosave small muted">Se guarda solo</span><button class="btn primary" type="submit">Guardar historia clínica</button></div></form>`;
   }else if(S.pacTab==='sesiones'){
     body=`<div class="row" style="justify-content:space-between"><p class="muted small" style="margin:0">${ses.length===1?'1 sesión registrada':ses.length+' sesiones registradas'}. Cada sesión guarda la evaluación, el tratamiento realizado y la evolución.</p><button class="btn primary" data-a="newSes" data-pac="${esc(p.id)}">${I.plus}Nueva sesión</button></div>
     <div class="timeline">${ses.length?ses.map(s=>{const pr=get('professionals',s.profesionalId);const B=(l,v)=>v?`<div><span class="eyebrow">${l}</span><p>${esc(v)}</p></div>`:'';return `<article class="sess"><div class="sess-h"><span class="n">Sesión ${esc(s.numero)}</span><span class="muted num">${cap(fLarga(s.fecha))} · ${fCorta(s.fecha)}</span>${pr?`<span class="pill"><span class="swatch" style="--pc:${esc(pr.color)}"></span>${esc(pr.nombre)}</span>`:''}<span class="grow"></span><button class="btn sm ghost" data-a="editSes" data-id="${esc(s.id)}">${I.edit}Editar</button></div>
-      <div class="sess-b">${B('Evaluación',s.evaluacion)}${B('Tratamiento realizado',s.tratamiento)}${B('Indicaciones',s.indicaciones)}${B('Evolución',s.evolucion)}${B('Próximo paso',s.proximo)}</div></article>`}).join(''):'<div class="panel empty">Todavía no hay sesiones. Registrá la primera con “Nueva sesión”.</div>'}</div>`;
+      <div class="sess-b">${B('Evaluación',s.evaluacion)}${B('Tratamiento realizado',s.tratamiento)}${B('Indicaciones',s.indicaciones)}${B('Evolución',s.evolucion)}${B('Próximo paso',s.proximo)}</div>${(()=>{const at=sesAtts(s.id);return at.length?`<div><span class="eyebrow">Documentos (${at.length})</span><div class="atts">${at.map(x=>attTile(x,false)).join('')}</div></div>`:''})()}</article>`}).join(''):'<div class="panel empty">Todavía no hay sesiones. Registrá la primera con “Nueva sesión”.</div>'}</div>`;
   }else if(S.pacTab==='turnos'){
     const fut=tur.filter(t=>t.fecha>=today()&&t.estado!=='cancelado');
     body=`<div class="row" style="justify-content:space-between"><p class="muted small" style="margin:0">${fut.length===1?'1 turno próximo':fut.length+' turnos próximos'}.</p><div class="row">${fut.length?`<button class="btn wa" data-a="waAll" data-pac="${esc(p.id)}">${I.wa}Enviar próximos turnos</button>`:''}<button class="btn primary" data-a="newAppt" data-pac="${esc(p.id)}">${I.plus}Nuevo turno</button></div></div>
@@ -407,10 +559,11 @@ function vConfig(){
     <form class="row" data-form="addMet" style="margin-top:14px"><input type="text" id="newMet" name="m" placeholder="Ej: Cuenta DNI, Modo, cheque…" style="max-width:320px" required><button class="btn" type="submit">${I.plus}Agregar</button></form></div>`;
   }else if(t==='whatsapp'){
     const sample=list('appointments').sort((a,b)=>(b.fecha).localeCompare(a.fecha))[0];
-    body=`<form class="panel" data-form="wa"><h3>Mensaje del turno</h3><p class="small muted" style="margin-top:-6px">Podés usar: {nombre} {apellido} {profesional} {especialidad} {fecha} {hora} {lugar} {direccion} {motivo}</p>
+    body=`<form class="panel" data-form="wa" data-auto data-key="main"><h3>Mensaje del turno</h3><p class="small muted" style="margin-top:-6px">Podés usar: {nombre} {apellido} {profesional} {especialidad} {fecha} {hora} {lugar} {direccion} {motivo} {calendario}</p>
+    <p class="small muted">{calendario} es el link para que el paciente agregue el turno a su Google Calendar. Si no lo ponés, igual podés sumarlo al enviar cada turno.</p>
     <textarea id="waTpl" name="t" rows="8">${esc(c.waTemplate)}</textarea>
-    ${sample?`<span class="eyebrow" style="margin-top:12px;display:block">Vista previa</span><div class="wa-preview" style="margin-top:6px"><div class="wa-bubble">${esc(fillTpl(c.waTemplate,sample))}</div></div>`:''}
-    <div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn primary" type="submit">Guardar mensaje</button></div></form>`;
+    ${sample?`<span class="eyebrow" style="margin-top:12px;display:block">Vista previa</span><div class="wa-preview" style="margin-top:6px"><div class="wa-bubble" id="waTplPrev" data-id="${esc(sample.id)}">${esc(fillTpl(c.waTemplate,sample))}</div></div>`:''}
+    <div class="row" style="justify-content:flex-end;margin-top:14px"><span class="autosave small muted">Se guarda solo</span><button class="btn primary" type="submit">Guardar mensaje</button></div></form>`;
   }else if(t==='agenda'){
     body=`<form class="panel" data-form="agcfg"><h3>Horario de la agenda</h3><div class="fgrid three" style="margin-top:8px"><label class="f">Desde<input type="time" id="cfgIni" name="horaInicio" value="${esc(c.horaInicio)}"></label><label class="f">Hasta<input type="time" id="cfgFin" name="horaFin" value="${esc(c.horaFin)}"></label><label class="f">Duración por defecto (min)<input type="number" id="cfgDur" name="duracion" min="5" step="5" value="${esc(c.duracion)}"></label></div>
     <div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn primary" type="submit">Guardar</button></div></form>`;
@@ -429,7 +582,7 @@ function vConfig(){
 
 /* ---------- modales ---------- */
 function openModal(html,wide){closeModal();const bg=document.createElement('div');bg.className='modal-bg';bg.id='modal';bg.innerHTML=`<div class="modal ${wide?'wide':''}" role="dialog" aria-modal="true">${html}</div>`;document.body.appendChild(bg);const f=bg.querySelector('input:not([type=hidden]),select,textarea');if(f&&window.innerWidth>820)f.focus()}
-function closeModal(){const m=$('#modal');if(m)m.remove()}
+function closeModal(){const m=$('#modal');if(m)m.remove();PEND.add.forEach(x=>{if(URLS.has(x.meta.id)){URL.revokeObjectURL(URLS.get(x.meta.id));URLS.delete(x.meta.id)}});PEND={ses:null,add:[],rm:new Set()}}
 const mHead=t=>`<div class="mh"><h2>${t}</h2><button class="btn icon ghost" data-a="close" aria-label="Cerrar">${I.x}</button></div>`;
 const opt=(v,l,sel)=>`<option value="${esc(v)}" ${sel?'selected':''}>${esc(l)}</option>`;
 function formData(f){const o={};new FormData(f).forEach((v,k)=>o[k]=typeof v==='string'?v.trim():v);return o}
@@ -475,7 +628,8 @@ function mApptView(a){
   </div><div class="mf"><button class="btn ghost" data-a="editAppt" data-id="${esc(a.id)}">${I.edit}Editar</button>${p?`<button class="btn" data-a="openPac" data-id="${esc(p.id)}">Ver ficha</button>`:''}<span class="grow"></span>
   ${p&&!isSec()?`<button class="btn" data-a="${ses?'editSes':'newSes'}" data-id="${ses?esc(ses.id):''}" data-pac="${esc(p.id)}" data-tur="${esc(a.id)}">${ses?'Ver sesión':'Registrar sesión'}</button>`:''}
   ${!paid?`<button class="btn" data-a="payAppt" data-id="${esc(a.id)}">Cobrar</button>`:''}
-  <button class="btn wa" data-a="waAppt" data-id="${esc(a.id)}">${I.wa}WhatsApp</button></div>`,true);
+  <button class="btn" data-a="mailAppt" data-id="${esc(a.id)}">${I.mail}Mail</button><button class="btn wa" data-a="waAppt" data-id="${esc(a.id)}">${I.wa}WhatsApp</button></div>
+  <div class="mb" style="padding-top:0"><a class="small" href="${esc(gcalLink(a))}" target="_blank" rel="noopener">${I.cal} Agregar este turno a mi Google Calendar</a></div>`,true);
 }
 function mPac(p){
   const isNew=!p;p=p||{id:uid('pac')};
@@ -496,8 +650,13 @@ function mSes(s,pac,tur){
   openModal(`${mHead((isNew?'Nueva sesión · ':'Sesión · ')+esc(pacName(get('patients',s.pacienteId))))}<form data-form="ses" data-id="${esc(s.id)}" data-pac="${esc(s.pacienteId)}" data-tur="${esc(s.turnoId||'')}"><div class="mb">
   <div class="fgrid three"><label class="f">N° de sesión<input type="number" id="se_num" name="numero" min="1" value="${esc(s.numero)}"></label><label class="f">Fecha<input type="date" id="se_fecha" name="fecha" value="${esc(s.fecha)}" required></label><label class="f">Profesional<select id="se_pro" name="profesionalId">${list('professionals').map(p=>opt(p.id,p.nombre,s.profesionalId===p.id)).join('')}</select></label></div>
   <div class="fgrid">${X('evaluacion','Evaluación / motivo de la sesión','Qué se observó, signos, mediciones…')}${X('tratamiento','Tratamiento realizado','Procedimiento, productos, dosis, zonas…')}${X('indicaciones','Indicaciones','Cuidados, medicación, recomendaciones…')}${X('evolucion','Evolución','Cómo respondió el paciente…')}${X('proximo','Próximo paso','Ej: control en 15 días')}</div>
+  <fieldset><legend>Documentos adjuntos</legend><div class="atts" id="seAtts"></div>
+  <div class="row" style="margin-top:10px"><label class="btn sm">${FILE_ICON}Adjuntar archivo<input type="file" id="seFile" multiple accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.txt" hidden></label>
+  <label class="btn sm primary scan-btn" ${(window.matchMedia&&matchMedia('(pointer:coarse)').matches)?'':'hidden'}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2"/><circle cx="12" cy="12" r="3.2"/></svg>Escanear con la cámara<input type="file" id="seScan" accept="image/*" capture="environment" hidden></label>
+  <label class="row small" style="gap:6px"><input type="checkbox" id="seDoc" checked> Mejorar como documento (blanco y negro)</label></div></fieldset>
   ${isNew&&s.turnoId?`<label class="row small" style="gap:8px"><input type="checkbox" id="se_att" name="marcar" checked> Marcar el turno como atendido</label>`:''}
   </div><div class="mf">${!isNew?`<button type="button" class="btn danger" data-a="askDel" data-col="sessions" data-id="${esc(s.id)}">Eliminar</button><span class="grow"></span>`:''}<button type="button" class="btn ghost" data-a="close">Cancelar</button><button type="submit" class="btn primary">Guardar sesión</button></div></form>`,true);
+  PEND={ses:s.id,add:[],rm:new Set()};renderPendAtts();
 }
 function mPay(x,prefill){
   const isNew=!x;x=x||Object.assign({id:uid('pag'),fecha:today(),estado:'pagado',metodo:cfg().metodos[0],profesionalId:S.fPro||(pros()[0]||{}).id||''},prefill||{});
@@ -536,9 +695,10 @@ function mWa(phone,msg,apptId,pacName_){
   openModal(`${mHead('Enviar por WhatsApp')}<div class="mb">
   <label class="f">Para ${esc(pacName_||'')}<input type="tel" id="waTel" value="${esc(phone||'')}" placeholder="342 155 123456"></label>
   <label class="f">Mensaje<textarea id="waMsg" rows="7">${esc(msg)}</textarea></label>
+  ${apptId&&!(cfg().waTemplate||'').includes('{calendario}')?`<label class="row small" style="gap:8px"><input type="checkbox" id="waCal" data-id="${esc(apptId)}" checked> Incluir link para agendar en Google Calendar</label>`:''}
   <div class="wa-preview"><div class="wa-bubble" id="waBub">${esc(msg)}</div></div>
   <p class="small muted" style="margin:0" id="waHint">${tel?'Se abre WhatsApp con el mensaje listo; solo tenés que tocar enviar.':'Cargá un número de celular para poder enviar.'}</p>
-  </div><div class="mf"><button class="btn ghost" data-a="copyWa">Copiar mensaje</button><span class="grow"></span><a class="btn wa" id="waGo" data-appt="${esc(apptId||'')}" target="_blank" rel="noopener" href="${tel?`https://wa.me/${tel}?text=${encodeURIComponent(msg)}`:'#'}">${I.wa}Abrir WhatsApp</a></div>`);
+  </div><div class="mf"><button class="btn ghost" data-a="copyWa">Copiar mensaje</button><span class="grow"></span>${apptId?`<button class="btn" data-a="mailAppt" data-id="${esc(apptId)}" data-fromwa="1">${I.mail}Mail</button>`:''}<a class="btn wa" id="waGo" data-appt="${esc(apptId||'')}" target="_blank" rel="noopener" href="${tel?`https://wa.me/${tel}?text=${encodeURIComponent(msg)}`:'#'}">${I.wa}Abrir WhatsApp</a></div>`);
 }
 function mConfirm(col,id){
   const what={appointments:'este turno',patients:'este paciente y su ficha',sessions:'esta sesión',payments:'este pago',professionals:'este profesional',locations:'este lugar'}[col];
@@ -565,6 +725,14 @@ document.addEventListener('click',async e=>{
     case 'waAll':{const p=get('patients',t.dataset.pac);mWa(p.telefono,msgProximos(p.id),'',pacName(p));break}
     case 'copyWa':{const txt=$('#waMsg').value;try{await navigator.clipboard.writeText(txt);toast('Mensaje copiado')}catch(err){$('#waMsg').select();toast('Seleccioné el texto: copialo con Ctrl+C')}break}
     case 'close':closeModal();break;
+    case 'mailAppt':{const x=get('appointments',id),p=x&&get('patients',x.pacienteId);if(!x)break;
+      const body=t.dataset.fromwa&&$('#waMsg')?$('#waMsg').value:msgTurno(x);
+      if(!(p&&p.email))toast('El paciente no tiene email cargado: escribilo en el mail que se abre.');
+      const u=mailLink(p&&p.email,`Turno ${cap(fLarga(x.fecha))} ${x.hora} hs`,body);
+      if(u.startsWith('mailto:'))location.href=u;else{const l=document.createElement('a');l.href=u;l.target='_blank';l.rel='noopener';document.body.appendChild(l);l.click();l.remove()}break}
+    case 'openAtt':openAtt(id);break;
+    case 'rmAtt':{const i=PEND.add.findIndex(x=>x.meta.id===id);if(i>=0)PEND.add.splice(i,1);else PEND.rm.add(id);renderPendAtts();break}
+    case 'closeViewer':{const v=$('#viewer');if(v)v.remove();break}
     case 'openPac':closeModal();S.pacId=id;S.pacTab='datos';S.view='paciente';window.scrollTo(0,0);render();break;
     case 'newPac':mPac();break;
     case 'editPac':mPac(get('patients',id));break;
@@ -582,7 +750,8 @@ document.addEventListener('click',async e=>{
     case 'delMet':{const c=cfg();const m=[...c.metodos];m.splice(+t.dataset.i,1);await save('config',{...c,id:'main',metodos:m});break}
     case 'askDel':mConfirm(t.dataset.col,id);break;
     case 'doDel':{const col=t.dataset.col;closeModal();
-      if(col==='patients'){for(const c of ['appointments','sessions','payments'])for(const x of list(c).filter(x=>x.pacienteId===id))await del(c,x.id);S.view='pacientes'}
+      if(col==='sessions')for(const x of sesAtts(id))await del('attachments',x.id);
+      if(col==='patients'){for(const c of ['appointments','sessions','payments','attachments'])for(const x of list(c).filter(x=>x.pacienteId===id))await del(c,x.id);S.view='pacientes'}
       await del(col,id);toast('Eliminado');break}
     case 'backup':backup();break;
     case 'syncNow':if(ST.mode==='server'){scheduleSync(0);toast('Sincronizando…')}break;
@@ -606,9 +775,10 @@ document.addEventListener('click',async e=>{
 });
 document.addEventListener('click',e=>{const g=e.target.closest('#waGo');if(!g)return;if(g.getAttribute('href')==='#'){e.preventDefault();toast('Falta el número de celular','err');return}
   const id=g.dataset.appt;if(id){const x=get('appointments',id);if(x)save('appointments',{...x,notificado:new Date().toISOString()})}setTimeout(closeModal,300)});
-document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal()});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){const v=$('#viewer');if(v)v.remove();else closeModal()}});
 document.addEventListener('input',e=>{
-  const t=e.target;
+  const t=e.target;const af=t.closest&&t.closest('form[data-auto]');
+  if(af&&t.id){draftInput(af,t);if(t.id==='waTpl')waPreview();return}
   if(t.id==='pacQ'){S.q=t.value;render()}
   else if(t.id==='apPacQ'){const q=norm(t.value);const sel=$('#apPac');[...sel.options].forEach(o=>{o.hidden=o.value!=='__new'&&!!q&&!norm(o.text).includes(q)});const vis=[...sel.options].filter(o=>!o.hidden&&o.value!=='__new');if(vis.length===1)sel.value=vis[0].value;$('#apNewPac').hidden=sel.value!=='__new'}
   else if(t.id==='waMsg'||t.id==='waTel'){const msg=$('#waMsg').value,tel=waPhone($('#waTel').value);$('#waBub').textContent=msg;$('#waGo').href=tel?`https://wa.me/${tel}?text=${encodeURIComponent(msg)}`:'#';$('#waHint').textContent=tel?'Se abre WhatsApp con el mensaje listo; solo tenés que tocar enviar.':'Cargá un número de celular para poder enviar.'}
@@ -625,6 +795,8 @@ document.addEventListener('change',async e=>{
   else if(t.id==='apPac'){$('#apNewPac').hidden=t.value!=='__new'}
   else if(t.id==='apPro')checkOverlap();
   else if(t.id==='restoreFile'&&t.files[0])restore(t.files[0]);
+  else if((t.id==='seFile'||t.id==='seScan')&&t.files.length){await addFiles([...t.files],t.id==='seScan');t.value=''}
+  else if(t.id==='waCal'){const x=get('appointments',t.dataset.id);const m=$('#waMsg');if(x&&m){const line=calLine(x);m.value=t.checked?(m.value.includes(line)?m.value:m.value+line):m.value.replace(line,'');m.dispatchEvent(new Event('input',{bubbles:true}))}}
 });
 document.addEventListener('submit',async e=>{
   const f=e.target,k=f.dataset.form;if(!k)return;e.preventDefault();
@@ -665,12 +837,14 @@ document.addEventListener('submit',async e=>{
     await save('patients',{...old,...d,id});closeModal();
     if(f.dataset.new){S.pacId=id;S.pacTab='datos';S.view='paciente';render()}toast('Ficha guardada');
   }else if(k==='hc'){
-    const p=get('patients',S.pacId);await save('patients',{...p,hc:d,hcUpdated:new Date().toISOString()});toast('Historia clínica guardada');
+    const dk=draftKey(f);if(DRAFT[dk]){clearTimeout(DRAFT[dk].timer);delete DRAFT[dk]}
+    const p=get('patients',f.dataset.key||S.pacId);await save('patients',{...p,hc:{...(p.hc||{}),...d},hcUpdated:new Date().toISOString()});toast('Historia clínica guardada');
   }else if(k==='ses'){
     const old=get('sessions',id)||{};const tur=f.dataset.tur;
     await save('sessions',{...old,id,pacienteId:f.dataset.pac,turnoId:tur,numero:+d.numero||1,fecha:d.fecha,profesionalId:d.profesionalId,evaluacion:d.evaluacion,tratamiento:d.tratamiento,indicaciones:d.indicaciones,evolucion:d.evolucion,proximo:d.proximo});
     if(d.marcar&&tur){const t=get('appointments',tur);if(t&&t.estado!=='atendido')await save('appointments',{...t,estado:'atendido'})}
-    closeModal();toast('Sesión guardada');
+    if(PEND.ses===id)await commitAtts(id,f.dataset.pac);
+    closeModal();render();toast('Sesión guardada');
   }else if(k==='pay'){
     const old=get('payments',id)||{};
     await save('payments',{...old,id,turnoId:f.dataset.tur||old.turnoId||'',pacienteId:d.pacienteId,fecha:d.fecha,monto:+d.monto||0,metodo:d.metodo,estado:d.estado,profesionalId:d.profesionalId,concepto:d.concepto,nota:d.nota});
@@ -683,6 +857,7 @@ document.addEventListener('submit',async e=>{
   }else if(k==='addMet'){
     const c=cfg();if(d.m&&!c.metodos.includes(d.m)){await save('config',{...c,id:'main',metodos:[...c.metodos,d.m]})}
   }else if(k==='wa'){
+    const dk=draftKey(f);if(DRAFT[dk]){clearTimeout(DRAFT[dk].timer);delete DRAFT[dk]}
     await save('config',{...cfg(),id:'main',waTemplate:d.t});toast('Mensaje guardado');
   }else if(k==='agcfg'){
     await save('config',{...cfg(),id:'main',horaInicio:d.horaInicio,horaFin:d.horaFin,duracion:+d.duracion||30});toast('Horario guardado');
@@ -779,7 +954,8 @@ async function boot(){
 }
 window.addEventListener('online',()=>scheduleSync(300));
 window.addEventListener('offline',()=>{ST.sync='offline';renderStatus()});
-document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')scheduleSync(300)});
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')scheduleSync(300);else flushDrafts()});
+window.addEventListener('pagehide',flushDrafts);
 setInterval(()=>scheduleSync(0),15000);
 setInterval(()=>{if(S.view==='agenda'&&!$('#modal')&&!S.screen)render()},60000);
 if('serviceWorker' in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('sw.js').catch(()=>{});

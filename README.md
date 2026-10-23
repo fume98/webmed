@@ -55,7 +55,7 @@ Recomendado: un servidor virtual (VPS) chico, por ejemplo DigitalOcean, Hetzner 
 Sin Docker: `npm start` con Node 22.13+ (variables `PORT` y `DATA_DIR`), detrás de un proxy con HTTPS.
 
 ### Copias de seguridad
-Todo está en un solo archivo: `agenda.sqlite` dentro del volumen de datos. Copialo seguido a otro lugar (por ejemplo con un cron diario). Además, desde la app: Configuración › Datos y copias › Descargar copia.
+Los datos están en `agenda.sqlite` y los documentos adjuntos de las sesiones en la carpeta `files/`, ambos dentro del volumen de datos. Copiá la carpeta completa seguido a otro lugar (por ejemplo con un cron diario). La copia que se descarga desde la app (Configuración › Datos y copias) guarda los datos pero no los archivos adjuntos.
 
 ## 2. Instalar en el celular
 - **Android (Chrome)**: abrí la dirección del servidor → menú ⋮ → *Instalar app*.

@@ -15,10 +15,13 @@ const PORT = Number(process.env.PORT || 8080);
 const DATA_DIR = process.env.AGENDA_DATA_DIR || process.env.DATA_DIR || path.join(__dirname, '..', 'data');
 const WEB_DIR = process.env.AGENDA_WEB_DIR || path.join(__dirname, '..', 'web');
 const TOKEN_DAYS = Number(process.env.TOKEN_DAYS || 30);
-const COLS = ['professionals', 'locations', 'patients', 'appointments', 'sessions', 'payments', 'config'];
+const COLS = ['professionals', 'locations', 'patients', 'appointments', 'sessions', 'payments', 'config', 'attachments'];
+const MAX_FILE = Number(process.env.MAX_FILE_MB || 20) * 1024 * 1024;
 const ROLES = ['admin', 'medico', 'secretaria'];
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
+const FILES_DIR = path.join(DATA_DIR, 'files');
+fs.mkdirSync(FILES_DIR, { recursive: true });
 const db = openDb(path.join(DATA_DIR, 'agenda.sqlite'));
 db.exec(`
 PRAGMA journal_mode=WAL;
@@ -56,8 +59,8 @@ const audit = (userId, accion, col = '', docId = '', detalle = '') =>
 const publicUser = (u) => u && ({ id: u.id, nombre: u.nombre, email: u.email, rol: u.rol, activo: !!u.activo, profesionalId: u.profesionalId || '' });
 
 /* ---------- permisos por rol ---------- */
-// La secretaria no ve historia clínica ni sesiones. Solo admin y médico cambian configuración, profesionales y lugares.
-const canRead = (u, col) => !(u.rol === 'secretaria' && col === 'sessions');
+// La secretaria no ve historia clínica, sesiones ni sus documentos adjuntos. Solo admin y médico cambian configuración, profesionales y lugares.
+const canRead = (u, col) => !(u.rol === 'secretaria' && (col === 'sessions' || col === 'attachments'));
 const canWrite = (u, col) => {
   if (u.rol === 'admin') return true;
   if (['config', 'professionals', 'locations'].includes(col)) return u.rol === 'medico';
@@ -75,7 +78,7 @@ function send(res, code, body, headers = {}) {
     'Content-Type': typeof body === 'object' && !Buffer.isBuffer(body) ? 'application/json; charset=utf-8' : 'text/plain; charset=utf-8',
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-    'Access-Control-Allow-Methods': 'GET, POST, PATCH, OPTIONS',
+    'Access-Control-Allow-Methods': 'GET, POST, PATCH, PUT, OPTIONS',
     'X-Content-Type-Options': 'nosniff',
     ...headers,
   });
@@ -174,6 +177,7 @@ const routes = {
         db.prepare(`INSERT INTO docs(col,id,data,updatedAt,deleted,seq,updatedBy) VALUES(?,?,?,?,?,?,?)
           ON CONFLICT(col,id) DO UPDATE SET data=excluded.data,updatedAt=excluded.updatedAt,deleted=excluded.deleted,seq=excluded.seq,updatedBy=excluded.updatedBy`)
           .run(col, doc.id, JSON.stringify(data), upd, deleted, nextSeq(), u.id);
+        if (deleted && col === 'attachments') for (const x of ['', '.type']) fs.rm(filePath(doc.id) + x, { force: true }, () => {});
         audit(u.id, deleted ? 'eliminó' : cur ? 'modificó' : 'creó', col, doc.id);
       }
       db.exec('COMMIT');
@@ -227,6 +231,36 @@ async function patchUser(req, u, id) {
   return { user: publicUser(db.prepare('SELECT * FROM users WHERE id=?').get(id)) };
 }
 
+/* ---------- documentos adjuntos (fotos, escaneos, PDF) ---------- */
+const FILE_ID = /^[\w-]{1,120}$/;
+const filePath = (id) => path.join(FILES_DIR, id);
+async function files(req, res, u, id) {
+  if (!FILE_ID.test(id)) return send(res, 400, { error: 'Archivo inválido.' });
+  if (!canRead(u, 'attachments')) return send(res, 403, { error: 'No tenés permiso para ver documentos.' });
+  const f = filePath(id);
+  if (req.method === 'GET') {
+    if (!fs.existsSync(f)) return send(res, 404, { error: 'El archivo todavía no se subió.' });
+    let tipo = 'application/octet-stream';
+    try { tipo = fs.readFileSync(f + '.type', 'utf8') || tipo; } catch (e) {}
+    res.writeHead(200, { 'Content-Type': tipo, 'Content-Length': fs.statSync(f).size, 'Cache-Control': 'private, max-age=86400', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; sandbox", 'Access-Control-Allow-Origin': '*' });
+    return fs.createReadStream(f).pipe(res);
+  }
+  if (req.method === 'PUT') {
+    const chunks = []; let size = 0;
+    await new Promise((resolve, reject) => {
+      req.on('data', (c) => { size += c.length; if (size > MAX_FILE) { reject(Object.assign(new Error('El archivo es demasiado grande.'), { status: 413 })); req.destroy(); } else chunks.push(c); });
+      req.on('end', resolve); req.on('error', reject);
+    });
+    const tmp = f + '.tmp-' + crypto.randomBytes(4).toString('hex');
+    fs.writeFileSync(tmp, Buffer.concat(chunks));
+    fs.renameSync(tmp, f);
+    fs.writeFileSync(f + '.type', String(req.headers['content-type'] || 'application/octet-stream').slice(0, 100));
+    audit(u.id, 'subió archivo', 'attachments', id, String(size));
+    return send(res, 200, { ok: true, size });
+  }
+  return send(res, 405, { error: 'Método no permitido' });
+}
+
 /* ---------- archivos de la app web ---------- */
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.png': 'image/png', '.svg': 'image/svg+xml', '.ico': 'image/x-icon' };
 function serveStatic(req, res, pathname) {
@@ -274,6 +308,8 @@ const server = http.createServer(async (req, res) => {
   try {
     const key = req.method + ' ' + url.pathname;
     const open = ['GET /api/status', 'POST /api/setup', 'POST /api/login'];
+    const fm = url.pathname.match(/^\/api\/files\/([^/]+)$/);
+    if (fm) { const u = authUser(req); if (!u) return send(res, 401, { error: 'Tu sesión venció. Volvé a ingresar.' }); return await files(req, res, u, decodeURIComponent(fm[1])); }
     const m = url.pathname.match(/^\/api\/users\/([\w-]+)$/);
     const handler = routes[key] || (m && req.method === 'PATCH' ? (rq, u) => patchUser(rq, u, m[1]) : null);
     if (!handler) return send(res, 404, { error: 'No encontrado' });
