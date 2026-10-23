@@ -15,6 +15,21 @@ jobs:
         with: { node-version: 22 }
       - run: npm test
 
+  servidor-docker:
+    # Arma la imagen del servidor y prueba que arranca y guarda datos en un disco montado como root (como Railway).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t agenda .
+      - run: |
+          sudo mkdir -p /tmp/datos && sudo chown root:root /tmp/datos
+          docker run -d --name agenda -p 8080:8080 -v /tmp/datos:/data agenda
+          for i in $(seq 1 20); do curl -sf localhost:8080/api/status && break; sleep 1; done
+          curl -sf -X POST localhost:8080/api/setup -H 'Content-Type: application/json' -d '{"nombre":"Prueba","email":"p@p.com","password":"clave1234"}' | grep -q token
+          docker exec agenda sh -c 'ps -o user,args | grep -v grep | grep "server/server.js" | grep -q "^node"'
+          sudo ls -la /tmp/datos | grep -q agenda.sqlite
+          docker logs agenda
+
   escritorio:
     # Arma los instaladores al publicar una versión (tag v1.0.0, etc.) o a mano desde la pestaña Actions.
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
