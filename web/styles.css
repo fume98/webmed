@@ -218,3 +218,25 @@ dl.kv dd{margin:2px 0 0;overflow-wrap:anywhere}
 button.choice:hover{border-color:var(--accent)}
 .choice span{color:var(--muted);font-size:.85rem}
 .js-status{display:inline-flex;align-items:center}
+
+/* guardado automático */
+.autosave{margin-right:auto;transition:color .2s}
+.autosave[data-st="ok"]{color:var(--ok)}
+.autosave[data-st="err"]{color:var(--bad)}
+
+/* documentos adjuntos */
+.atts{display:flex;flex-wrap:wrap;gap:10px;margin-top:6px}
+.att{position:relative;width:104px}
+.att-open{display:flex;flex-direction:column;gap:4px;width:100%;border:1px solid var(--line);border-radius:10px;background:var(--surface-2);padding:4px;cursor:pointer;color:inherit;text-align:left}
+.att-open img,.att-ic{width:100%;height:84px;border-radius:7px;object-fit:cover;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;background:var(--surface);color:var(--accent)}
+.att-ic svg{width:30px;height:30px}
+.att-ic small{font-size:.65rem;font-weight:600;letter-spacing:.08em;color:var(--muted)}
+.att-n{font-size:.72rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 2px}
+.att.missing .att-open img{visibility:hidden}
+.att-x{position:absolute;top:-7px;right:-7px;width:24px;height:24px;border-radius:50%;border:1px solid var(--line);background:var(--surface);color:var(--ink);cursor:pointer;line-height:1}
+.att-x:hover{background:var(--bad-soft);color:var(--bad)}
+label.btn{cursor:pointer}
+.viewer{position:fixed;inset:0;z-index:80;background:rgba(20,14,10,.92);display:flex;flex-direction:column}
+.viewer-bar{display:flex;align-items:center;gap:8px;padding:10px 12px;color:#F1E6DA;font-size:.85rem}
+.viewer-bar span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.viewer img{flex:1;min-height:0;width:100%;object-fit:contain;padding:0 10px 14px}

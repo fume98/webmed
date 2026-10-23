@@ -58,5 +58,23 @@ test('flujo completo', async () => {
 
     assert.equal((await call('/api/users', null, sec)).status, 403);
     assert.ok((await call('/api/audit', null, admin)).body.audit.length > 3);
+
+    // documentos adjuntos: se suben, se descargan, la secretaria no los ve y se borran con la ficha
+    const png = Buffer.from('89504e470d0a1a0a0000', 'hex');
+    const up = await fetch(base + '/api/files/adj_1', { method: 'PUT', headers: { Authorization: 'Bearer ' + admin, 'Content-Type': 'image/png' }, body: png });
+    assert.equal(up.status, 200);
+    await call('/api/sync', { since: 0, changes: [{ col: 'attachments', doc: { id: 'adj_1', pacienteId: 'p1', sesionId: 's2', nombre: 'estudio.png', tipo: 'image/png', updatedAt: '2026-03-01T00:00:00.000Z' } }] }, admin);
+    const dl = await fetch(base + '/api/files/adj_1', { headers: { Authorization: 'Bearer ' + admin } });
+    assert.equal(dl.status, 200);
+    assert.equal(dl.headers.get('content-type'), 'image/png');
+    assert.deepEqual(Buffer.from(await dl.arrayBuffer()), png);
+    assert.equal((await fetch(base + '/api/files/adj_1')).status, 401);
+    assert.equal((await fetch(base + '/api/files/adj_1', { headers: { Authorization: 'Bearer ' + sec } })).status, 403);
+    assert.equal((await fetch(base + '/api/files/..%2Fagenda.sqlite', { headers: { Authorization: 'Bearer ' + admin } })).status, 400);
+    s = await call('/api/sync', { since: 0 }, sec);
+    assert.ok(!s.body.changes.some((c) => c.col === 'attachments'));
+    await call('/api/sync', { since: 0, changes: [{ col: 'attachments', doc: { id: 'adj_1', _deleted: true, updatedAt: '2026-03-02T00:00:00.000Z' } }] }, admin);
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal((await fetch(base + '/api/files/adj_1', { headers: { Authorization: 'Bearer ' + admin } })).status, 404);
   } finally { server.close(); }
 });
