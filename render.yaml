@@ -2,7 +2,7 @@
 # El disco en /data guarda la base de datos y los documentos adjuntos (sin disco se borrarían en cada reinicio).
 services:
   - type: web
-    name: agenda-dra-paulina-lopez
+    name: agenda-dra-lopez
     runtime: docker
     plan: starter
     dockerfilePath: ./Dockerfile
