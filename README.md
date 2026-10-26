@@ -46,7 +46,7 @@ Costo: Railway da 5 USD de prueba gratis; después el plan Hobby cuesta 5 USD po
 1. Creá una cuenta en https://render.com con **Sign in with GitHub** y dale acceso al repositorio `webmed`.
 2. En el panel: **New › Blueprint** › elegí `webmed` › **Apply**. Render lee `render.yaml` y crea todo solo: el servidor y un disco de 1 GB en `/data` para los datos y los documentos.
 3. Pide una tarjeta: el plan *Starter* cuesta USD 7 por mes, más unos centavos por el disco. El plan gratis no sirve porque no tiene disco y se perderían los datos.
-4. Cuando termine (unos 5 minutos), arriba aparece la dirección `https://agenda-dra-paulina-lopez-xxxx.onrender.com`. Ese es el link para la PC, el celular y la web. Entrá y creá la cuenta de administración.
+4. Cuando termine (unos 5 minutos), arriba aparece la dirección `https://agenda-dra-lopez.onrender.com`. Ese es el link para la PC, el celular y la web. Entrá y creá la cuenta de administración.
 5. Cada cambio que se una a `main` se publica solo.
 
 ## 1. Poner el servidor en un VPS propio (alternativa avanzada)
