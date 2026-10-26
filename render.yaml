@@ -1,0 +1,18 @@
+# Publicación en Render (render.com): Dashboard › New › Blueprint › elegir este repositorio.
+# El disco en /data guarda la base de datos y los documentos adjuntos (sin disco se borrarían en cada reinicio).
+services:
+  - type: web
+    name: agenda-dra-paulina-lopez
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/status
+    envVars:
+      - key: PORT
+        value: "8080"
+      - key: DATA_DIR
+        value: /data
+    disk:
+      name: datos
+      mountPath: /data
+      sizeGB: 1
