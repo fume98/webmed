@@ -331,6 +331,27 @@ async function openAtt(id){
   const a=document.createElement('a');a.href=u;a.target='_blank';a.rel='noopener';if(!/pdf/.test(x.tipo))a.download=x.nombre;document.body.appendChild(a);a.click();a.remove();
 }
 
+/* ---------- apariencia: paleta de colores y modo claro/oscuro (se guarda en cada equipo) ---------- */
+const PALETAS=[['beige','Beige y marrón',['#F5EEE4','#FFFFFF','#8B5E3C']],['rosa','Rosa empolvado',['#F7EEEC','#FFFFFF','#A86F6F']],['salvia','Verde salvia',['#EFF1EA','#FFFFFF','#5F7552']],['piedra','Gris piedra',['#F1EFEC','#FFFFFF','#6E655C']],['azul','Azul sereno',['#EEF2F5','#FFFFFF','#4F6D8A']]];
+const MODOS=[['auto','Automático'],['claro','Claro'],['oscuro','Oscuro']];
+function temaGet(){try{return JSON.parse(localStorage.getItem('pl_tema')||'{}')||{}}catch(e){return {}}}
+function temaApply(){
+  const t=temaGet(),r=document.documentElement,p=PALETAS.some(x=>x[0]===t.paleta)?t.paleta:'beige';
+  if(p==='beige')r.removeAttribute('data-palette');else r.setAttribute('data-palette',p);
+  if(t.modo==='claro')r.setAttribute('data-theme','light');else if(t.modo==='oscuro')r.setAttribute('data-theme','dark');else r.removeAttribute('data-theme');
+  const bg=getComputedStyle(r).getPropertyValue('--bg').trim();
+  if(bg)document.querySelectorAll('meta[name="theme-color"]').forEach(m=>{m.setAttribute('content',bg);m.removeAttribute('media')});
+}
+function temaSet(k,v){const t=temaGet();t[k]=v;try{localStorage.setItem('pl_tema',JSON.stringify(t))}catch(e){}temaApply();render()}
+temaApply();
+try{matchMedia('(prefers-color-scheme: dark)').addEventListener('change',temaApply)}catch(e){}
+function vApariencia(){
+  const t=temaGet(),p=t.paleta||'beige',m=t.modo||'auto';
+  return `<div class="panel"><h3>Paleta de colores</h3><div class="pal-grid">${PALETAS.map(([id,n,c])=>`<button class="pal ${p===id?'on':''}" data-a="paleta" data-p="${id}" aria-pressed="${p===id}"><span class="sw">${c.map(x=>`<i style="background:${x}"></i>`).join('')}</span>${esc(n)}</button>`).join('')}</div></div>
+  <div class="panel"><h3>Modo</h3><div class="seg">${MODOS.map(([id,n])=>`<button class="${m===id?'on':''}" data-a="tmodo" data-m="${id}">${n}</button>`).join('')}</div>
+  <p class="small muted" style="margin:10px 0 0">Automático sigue el modo claro u oscuro del equipo. La apariencia se guarda en cada computadora o celular, así cada uno puede tener la suya.</p></div>`;
+}
+
 /* ---------- render principal ---------- */
 function navBtn(v,label,icon){const on=S.view===v||(v==='pacientes'&&S.view==='paciente');return `<button class="${on?'on':''}" data-a="nav" data-v="${v}">${icon}<span>${label}</span></button>`}
 function shell(){
@@ -544,9 +565,9 @@ function vPagos(){
 /* ---------- Configuración ---------- */
 function vConfig(){
   const c=cfg();
-  let tabs=[['profesionales','Profesionales'],['lugares','Lugares de atención'],['pagos','Métodos de pago'],['whatsapp','Mensaje de WhatsApp'],['agenda','Agenda'],['datos','Datos y copias'],['conexion','Conexión']];
+  let tabs=[['profesionales','Profesionales'],['lugares','Lugares de atención'],['pagos','Métodos de pago'],['whatsapp','Mensaje de WhatsApp'],['agenda','Agenda'],['apariencia','Apariencia'],['datos','Datos y copias'],['conexion','Conexión']];
   if(ST.mode==='server'&&role()==='admin')tabs.push(['usuarios','Usuarios'],['registro','Registro de cambios']);
-  if(isSec())tabs=[['conexion','Conexión']];
+  if(isSec())tabs=[['conexion','Conexión'],['apariencia','Apariencia']];
   const tk=tabs.map(x=>x[0]);const t=tk.includes(S.cfgTab)?S.cfgTab:tk[0];
   let body='';
   if(t==='profesionales'){
@@ -564,6 +585,7 @@ function vConfig(){
     <textarea id="waTpl" name="t" rows="8">${esc(c.waTemplate)}</textarea>
     ${sample?`<span class="eyebrow" style="margin-top:12px;display:block">Vista previa</span><div class="wa-preview" style="margin-top:6px"><div class="wa-bubble" id="waTplPrev" data-id="${esc(sample.id)}">${esc(fillTpl(c.waTemplate,sample))}</div></div>`:''}
     <div class="row" style="justify-content:flex-end;margin-top:14px"><span class="autosave small muted">Se guarda solo</span><button class="btn primary" type="submit">Guardar mensaje</button></div></form>`;
+  }else if(t==='apariencia'){body=vApariencia()
   }else if(t==='agenda'){
     body=`<form class="panel" data-form="agcfg"><h3>Horario de la agenda</h3><div class="fgrid three" style="margin-top:8px"><label class="f">Desde<input type="time" id="cfgIni" name="horaInicio" value="${esc(c.horaInicio)}"></label><label class="f">Hasta<input type="time" id="cfgFin" name="horaFin" value="${esc(c.horaFin)}"></label><label class="f">Duración por defecto (min)<input type="number" id="cfgDur" name="duracion" min="5" step="5" value="${esc(c.duracion)}"></label></div>
     <div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn primary" type="submit">Guardar</button></div></form>`;
@@ -725,6 +747,8 @@ document.addEventListener('click',async e=>{
     case 'waAll':{const p=get('patients',t.dataset.pac);mWa(p.telefono,msgProximos(p.id),'',pacName(p));break}
     case 'copyWa':{const txt=$('#waMsg').value;try{await navigator.clipboard.writeText(txt);toast('Mensaje copiado')}catch(err){$('#waMsg').select();toast('Seleccioné el texto: copialo con Ctrl+C')}break}
     case 'close':closeModal();break;
+    case 'paleta':temaSet('paleta',t.dataset.p);break;
+    case 'tmodo':temaSet('modo',t.dataset.m);break;
     case 'mailAppt':{const x=get('appointments',id),p=x&&get('patients',x.pacienteId);if(!x)break;
       const body=t.dataset.fromwa&&$('#waMsg')?$('#waMsg').value:msgTurno(x);
       if(!(p&&p.email))toast('El paciente no tiene email cargado: escribilo en el mail que se abre.');
