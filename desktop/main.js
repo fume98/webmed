@@ -58,7 +58,7 @@ function createWindow() {
   const win = new BrowserWindow({
     width: 1360, height: 880, minWidth: 380, minHeight: 600,
     title: 'Agenda Dra Paulina Lopez',
-    backgroundColor: '#F3EBE1',
+    backgroundColor: '#F5EEE4',
     icon: path.join(__dirname, 'web', 'icon-512.png'),
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: true, nodeIntegration: false },
   });

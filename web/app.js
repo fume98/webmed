@@ -24,7 +24,7 @@ const weekStart=s=>{const d=pd(s);const w=(d.getDay()+6)%7;d.setDate(d.getDate()
 const norm=s=>String(s||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
 const ESTADOS=['pendiente','confirmado','atendido','ausente','cancelado'];
 const ESTADO_TXT={pendiente:'Pendiente',confirmado:'Confirmado',atendido:'Atendido',ausente:'Ausente',cancelado:'Cancelado',pagado:'Pagado'};
-const COLORS=['#A0674B','#7E8C6A','#B5838D','#6D8A96','#C49A4A','#8E7DBE','#5E8C7A','#B0645A'];
+const COLORS=['#8B5E3C','#B08A62','#6F4A2F','#C9A27E','#A0674B','#7D6450','#D2B48C','#5C4033'];
 
 const I={ // iconos de trazo fino
   cal:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><rect x="3.5" y="5" width="17" height="15" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>',
