@@ -269,7 +269,8 @@ function serveStatic(req, res, pathname) {
   if (!file.startsWith(WEB_DIR)) return send(res, 403, 'Prohibido');
   if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) file = path.join(WEB_DIR, 'index.html');
   const ext = path.extname(file);
-  const noCache = ext === '.html' || file.endsWith('sw.js');
+  // html, js y css sin caché del navegador: así cada publicación nueva se ve al recargar.
+  const noCache = ['.html', '.js', '.css', '.webmanifest'].includes(ext);
   res.writeHead(200, {
     'Content-Type': MIME[ext] || 'application/octet-stream',
     'Cache-Control': noCache ? 'no-cache' : 'public, max-age=3600',
