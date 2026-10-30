@@ -49,6 +49,15 @@ Costo: Railway da 5 USD de prueba gratis; después el plan Hobby cuesta 5 USD po
 4. Cuando termine (unos 5 minutos), arriba aparece la dirección `https://agenda-dra-lopez.onrender.com`. Ese es el link para la PC, el celular y la web. Entrá y creá la cuenta de administración.
 5. Cada cambio que se una a `main` se publica solo.
 
+## Ver la agenda en Google Calendar
+
+En **Configuración › Google Calendar** cada usuario (administración o profesional) obtiene un enlace privado `/api/cal/<clave>.ics`. Con **Agregar a Google Calendar** aparece como un calendario aparte, también en el celular.
+
+- Es solo de ida: los turnos van de la plataforma a Google Calendar; los eventos de Google no entran a la plataforma.
+- Google lo actualiza cada algunas horas (no es al instante). Incluye los turnos de los últimos 3 meses en adelante, sin los cancelados.
+- Necesita el servidor publicado en internet (Render, VPS). En modo "solo en este equipo" o por WiFi Google no puede leerlo.
+- Quien tenga el enlace ve los turnos: **Generar enlace nuevo** anula el anterior.
+
 ## 1. Poner el servidor en un VPS propio (alternativa avanzada)
 
 Recomendado: un servidor virtual (VPS) chico, por ejemplo DigitalOcean, Hetzner o Vultr, desde unos 5 USD por mes, con un dominio (por ejemplo `agenda.drapaulinalopez.com.ar`).

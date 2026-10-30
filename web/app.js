@@ -565,7 +565,7 @@ function vPagos(){
 /* ---------- Configuración ---------- */
 function vConfig(){
   const c=cfg();
-  let tabs=[['profesionales','Profesionales'],['lugares','Lugares de atención'],['pagos','Métodos de pago'],['whatsapp','Mensaje de WhatsApp'],['agenda','Agenda'],['apariencia','Apariencia'],['datos','Datos y copias'],['conexion','Conexión']];
+  let tabs=[['profesionales','Profesionales'],['lugares','Lugares de atención'],['pagos','Métodos de pago'],['whatsapp','Mensaje de WhatsApp'],['agenda','Agenda'],['apariencia','Apariencia'],['gcal','Google Calendar'],['datos','Datos y copias'],['conexion','Conexión']];
   if(ST.mode==='server'&&role()==='admin')tabs.push(['usuarios','Usuarios'],['registro','Registro de cambios']);
   if(isSec())tabs=[['conexion','Conexión'],['apariencia','Apariencia']];
   const tk=tabs.map(x=>x[0]);const t=tk.includes(S.cfgTab)?S.cfgTab:tk[0];
@@ -589,7 +589,8 @@ function vConfig(){
   }else if(t==='agenda'){
     body=`<form class="panel" data-form="agcfg"><h3>Horario de la agenda</h3><div class="fgrid three" style="margin-top:8px"><label class="f">Desde<input type="time" id="cfgIni" name="horaInicio" value="${esc(c.horaInicio)}"></label><label class="f">Hasta<input type="time" id="cfgFin" name="horaFin" value="${esc(c.horaFin)}"></label><label class="f">Duración por defecto (min)<input type="number" id="cfgDur" name="duracion" min="5" step="5" value="${esc(c.duracion)}"></label></div>
     <div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn primary" type="submit">Guardar</button></div></form>`;
-  }else if(t==='conexion'){body=vConexion()}
+  }else if(t==='conexion'){body=vConexion()
+  }else if(t==='gcal'){body=vGcal()}
   else if(t==='usuarios'){body=vUsers()}
   else if(t==='registro'){body=vAudit()}
   else{
@@ -745,6 +746,9 @@ document.addEventListener('click',async e=>{
     case 'setEst':{const x=get('appointments',id);if(x){await save('appointments',{...x,estado:t.dataset.e});mApptView(get('appointments',id));toast('Estado actualizado')}break}
     case 'waAppt':{const x=get('appointments',id),p=x&&get('patients',x.pacienteId);if(x)mWa(p&&p.telefono,msgTurno(x),x.id,pacName(p));break}
     case 'waAll':{const p=get('patients',t.dataset.pac);mWa(p.telefono,msgProximos(p.id),'',pacName(p));break}
+    case 'gcalCopy':{try{await navigator.clipboard.writeText(S.gcal);toast('Enlace copiado')}catch(err){const i=$('#gcalUrl');i.focus();i.select();toast('Seleccioné el enlace: copialo con Ctrl+C')}break}
+    case 'gcalNew':{if(!S.gcalSure){S.gcalSure=true;render();break}await gcalLoad(true);break}
+    case 'gcalRetry':{S.gcal=undefined;S.gcalErr='';render();break}
     case 'copyWa':{const txt=$('#waMsg').value;try{await navigator.clipboard.writeText(txt);toast('Mensaje copiado')}catch(err){$('#waMsg').select();toast('Seleccioné el texto: copialo con Ctrl+C')}break}
     case 'close':closeModal();break;
     case 'paleta':temaSet('paleta',t.dataset.p);break;
@@ -789,7 +793,7 @@ document.addEventListener('click',async e=>{
     case 'chooseLocal':ST.mode='local';LS.set('mode','local');S.screen=null;await loadFromDevice();await seedBase();render();break;
     case 'resetMode':ST.mode='';LS.del('mode');S.screen='mode';render();break;
     case 'logout':openModal(`${mHead('¿Cerrar sesión?')}<div class="mb"><p style="margin:0">${ST.pending?`<b>Hay ${ST.pending} cambios que todavía no se subieron al servidor y se van a perder.</b> Conectate a internet y sincronizá antes de salir. `:''}Al cerrar sesión se borra la copia de los datos guardada en este equipo.</p></div><div class="mf"><button class="btn ghost" data-a="close">Cancelar</button><button class="btn primary" data-a="doLogout">Cerrar sesión</button></div>`);break;
-    case 'doLogout':{closeModal();if(ES){ES.close();ES=null}try{await api('/api/logout',{})}catch(e){}ST.token='';ST.user=null;ST.since=0;ST.pending=0;['token','user','since','lastSync'].forEach(k=>LS.del(k));if(ST.idb){await idbClear('docs');await idbClear('outbox')}COLS.forEach(c=>S.data[c]={});S.screen='login';S.view='agenda';render();break}
+    case 'doLogout':{closeModal();if(ES){ES.close();ES=null}try{await api('/api/logout',{})}catch(e){}ST.token='';ST.user=null;ST.since=0;ST.pending=0;['token','user','since','lastSync'].forEach(k=>LS.del(k));if(ST.idb){await idbClear('docs');await idbClear('outbox')}COLS.forEach(c=>S.data[c]={});S.gcal=undefined;S.gcalErr='';S.screen='login';S.view='agenda';render();break}
     case 'chgPass':openModal(`${mHead('Cambiar mi contraseña')}<form data-form="chgPass"><div class="mb"><label class="f">Contraseña actual<input type="password" id="cp_a" name="actual" required autocomplete="current-password"></label><label class="f">Nueva contraseña (mínimo 8)<input type="password" id="cp_n" name="nueva" minlength="8" required autocomplete="new-password"></label></div><div class="mf"><button type="button" class="btn ghost" data-a="close">Cancelar</button><button class="btn primary" type="submit">Guardar</button></div></form>`);break;
     case 'newUser':mUser();break;
     case 'editUser':mUser((S.users||[]).find(u=>u.id===id));break;
@@ -954,6 +958,30 @@ function vConexion(){
   return `<div class="panel"><h3>Conectada al servidor</h3><dl class="kv">${kv('Servidor',ST.server)}${kv('Usuario',ST.user&&`${ST.user.nombre} (${ST.user.email})`)}${kv('Última sincronización',ST.lastSync?new Date(ST.lastSync).toLocaleString('es-AR'):'')}${kv('Cambios por subir',String(ST.pending))}</dl>
     <p class="small muted">La agenda funciona aunque no haya internet: los cambios quedan guardados en este equipo y se suben solos cuando vuelve la conexión.</p>
     <div class="row"><button class="btn" data-a="syncNow">Sincronizar ahora</button>${window.agendaDesktop?`<button class="btn" data-a="resetMode">Cambiar modo de uso</button>`:''}<button class="btn" data-a="chgPass">Cambiar mi contraseña</button><button class="btn danger" data-a="logout">Cerrar sesión</button></div></div>${/localhost|127\.0\.0\.1/.test(ST.server)?lanPanel():''}`;
+}
+
+/* ---------- ver la agenda en Google Calendar: enlace de calendario de solo lectura (va de la plataforma a Google, nunca al revés) ---------- */
+const privHost=u=>{try{const h=new URL(u).hostname;return /^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.)|\.local$/.test(h)}catch(e){return true}};
+async function gcalLoad(nuevo){
+  try{const j=await api(nuevo?'/api/calendario/nuevo':'/api/calendario',nuevo?{}:null);S.gcal=ST.server.replace(/\/$/,'')+j.path;if(nuevo)toast('Enlace nuevo listo. El anterior dejó de funcionar.')}
+  catch(e){S.gcal='';S.gcalErr=e.message||'No se pudo obtener el enlace.'}
+  S.gcalSure=false;render();
+}
+function vGcal(){
+  const intro=`<p class="small muted" style="margin-top:-6px">Los turnos de la plataforma aparecen en tu Google Calendar como un calendario aparte. Es solo de ida: lo que tengas en Google Calendar no se ve en la plataforma.</p>`;
+  if(ST.mode!=='server')return `<div class="panel"><h3>Ver la agenda en Google Calendar</h3>${intro}<p>Para esto la agenda tiene que estar en el servidor de internet (la versión web). En el modo "solo en este equipo" Google no puede leer los turnos.</p></div>`;
+  if(privHost(ST.server))return `<div class="panel"><h3>Ver la agenda en Google Calendar</h3>${intro}<p>Este equipo está conectado a un servidor de la red de tu casa o consultorio (${esc(ST.server)}), y Google no puede entrar ahí. Activalo desde la versión web publicada en internet.</p></div>`;
+  if(S.gcal===undefined){S.gcal=null;gcalLoad(false)}
+  if(!S.gcal)return `<div class="panel"><h3>Ver la agenda en Google Calendar</h3>${intro}<p class="${S.gcalErr?'':'muted'}">${esc(S.gcalErr||'Preparando tu enlace…')}</p>${S.gcalErr?'<button class="btn" data-a="gcalRetry">Reintentar</button>':''}</div>`;
+  const add='https://calendar.google.com/calendar/render?cid='+encodeURIComponent(S.gcal.replace(/^https?:/,'webcal:'));
+  return `<div class="panel"><h3>Ver la agenda en Google Calendar</h3>${intro}
+    <ol class="steps"><li>Desde la computadora, con la cuenta de Gmail donde querés ver los turnos, tocá <b>Agregar a Google Calendar</b>.</li><li>En Google Calendar confirmá con <b>Agregar</b>.</li><li>Listo: aparece el calendario <b>Agenda Dra Paulina Lopez</b>, también en la app de Google Calendar del celular.</li></ol>
+    <div class="row" style="margin-top:12px"><a class="btn primary" href="${esc(add)}" target="_blank" rel="noopener">${I.cal||''}Agregar a Google Calendar</a><button class="btn" data-a="gcalCopy">Copiar enlace</button></div>
+    <label class="f" style="margin-top:14px">Enlace del calendario<input type="text" id="gcalUrl" value="${esc(S.gcal)}" readonly></label>
+    <p class="small muted">Si el botón no funciona: en Google Calendar andá a <b>Otros calendarios › + › Desde URL</b>, pegá el enlace y tocá <b>Agregar calendario</b>.</p>
+    <p class="small muted">Google actualiza este calendario solo, cada algunas horas (no es al instante). Se ven los turnos de los últimos 3 meses en adelante, sin los cancelados.</p></div>
+  <div class="panel"><h3>Privacidad</h3><p class="small muted" style="margin-top:-6px">El enlace es privado: quien lo tenga puede ver los turnos. Si lo compartiste por error, generá uno nuevo; el anterior deja de funcionar y vas a tener que agregar el nuevo en Google Calendar.</p>
+    <button class="btn ${S.gcalSure?'danger':''}" data-a="gcalNew">${S.gcalSure?'¿Seguro? Tocá de nuevo para generar':'Generar enlace nuevo'}</button></div>`;
 }
 
 /* ---------- inicio ---------- */
