@@ -266,3 +266,15 @@ label.btn{cursor:pointer}
 /* pasos numerados (Google Calendar) */
 .steps{margin:8px 0 0;padding-left:20px;display:grid;gap:6px}
 .steps li::marker{color:var(--accent);font-weight:600}
+
+/* flechitas para correr las pestañas */
+.tabs-wrap{position:relative;--tabs-bg:var(--bg)}
+.panel .tabs-wrap,.modal .tabs-wrap{--tabs-bg:var(--surface)}
+.tabs-arr{position:absolute;top:0;bottom:1px;width:44px;border:0;padding:0;display:flex;align-items:center;cursor:pointer;opacity:0;pointer-events:none;transition:opacity .2s;z-index:2}
+.tabs-arr.l{left:0;justify-content:flex-start;background:linear-gradient(to right,var(--tabs-bg) 45%,transparent)}
+.tabs-arr.r{right:0;justify-content:flex-end;background:linear-gradient(to left,var(--tabs-bg) 45%,transparent)}
+.tabs-arr i{display:grid;place-items:center;width:26px;height:26px;border-radius:50%;background:var(--surface);border:1px solid var(--line);color:var(--accent);box-shadow:0 1px 3px rgba(59,42,32,.12);transition:background .15s,border-color .15s}
+.tabs-arr:hover i{background:var(--accent-soft);border-color:var(--accent)}
+.tabs-arr svg{width:14px;height:14px}
+.tabs-arr.l svg{transform:rotate(180deg)}
+.can-l .tabs-arr.l,.can-r .tabs-arr.r{opacity:1;pointer-events:auto}

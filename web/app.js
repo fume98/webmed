@@ -395,14 +395,32 @@ function renderSoft(){
 }
 document.addEventListener('focusout',()=>{if(softPending)setTimeout(()=>{const ae=document.activeElement;if(!(ae&&ae.closest&&ae.closest('#main form[data-form]'))){softPending=false;render()}},0)});
 let rendering=false;
+/* ---------- barra de pestañas con flechitas: se corre con las flechas, la rueda del mouse o el dedo ---------- */
+const CHEV='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 6l6 6-6 6"/></svg>';
+const tabsBar=inner=>`<div class="tabs-wrap"><button type="button" class="tabs-arr l" data-a="tabsScroll" data-d="-1" aria-label="Ver pestañas anteriores" tabindex="-1"><i>${CHEV}</i></button><div class="tabs">${inner}</div><button type="button" class="tabs-arr r" data-a="tabsScroll" data-d="1" aria-label="Ver más pestañas" tabindex="-1"><i>${CHEV}</i></button></div>`;
+function tabsUpd(w){const t=w.querySelector('.tabs');if(!t)return;w.classList.toggle('can-l',t.scrollLeft>2);w.classList.toggle('can-r',t.scrollLeft+t.clientWidth<t.scrollWidth-2)}
+const TABS_ON=[];
+function tabsInit(prev){
+  document.querySelectorAll('.tabs-wrap').forEach((w,i)=>{
+    const t=w.querySelector('.tabs');
+    if(prev&&prev[i]!=null)t.scrollLeft=prev[i];
+    const on=t.querySelector('.on'),k=on&&on.dataset.a+on.dataset.t;
+    if(on&&(!prev||prev[i]==null||TABS_ON[i]!==k)){const l=on.offsetLeft-t.offsetLeft,r=l+on.offsetWidth;if(l<t.scrollLeft)t.scrollLeft=l-36;else if(r>t.scrollLeft+t.clientWidth)t.scrollLeft=r-t.clientWidth+36}
+    t.addEventListener('scroll',()=>tabsUpd(w),{passive:true});
+    t.addEventListener('wheel',e=>{if(t.scrollWidth<=t.clientWidth||Math.abs(e.deltaX)>Math.abs(e.deltaY))return;e.preventDefault();t.scrollLeft+=e.deltaY},{passive:false});
+    TABS_ON[i]=k;tabsUpd(w);
+  });
+}
+window.addEventListener('resize',()=>document.querySelectorAll('.tabs-wrap').forEach(tabsUpd));
+
 function render(){
   if(rendering)return;rendering=true;
   const ae=document.activeElement,fid=ae&&ae.id,ss=ae&&'selectionStart' in ae?ae.selectionStart:null;
-  const sy=window.scrollY,calSc=$('.cal')?.scrollLeft;
+  const sy=window.scrollY,calSc=$('.cal')?.scrollLeft,tabSc=[...document.querySelectorAll('.tabs-wrap .tabs')].map(x=>x.scrollLeft);
   $('#root').innerHTML=shell();
   applyDrafts();hydrateThumbs();
   if(fid){const el=document.getElementById(fid);if(el&&!el.closest('.modal')){el.focus();try{if(ss!=null)el.setSelectionRange(ss,ss)}catch(e){}}}
-  window.scrollTo(0,sy);if(calSc&&$('.cal'))$('.cal').scrollLeft=calSc;
+  window.scrollTo(0,sy);if(calSc&&$('.cal'))$('.cal').scrollLeft=calSc;tabsInit(tabSc);
   try{localStorage.setItem('pl_ui',JSON.stringify({view:S.view,calMode:S.calMode}))}catch(e){}
   rendering=false;
 }
@@ -532,7 +550,7 @@ function vPaciente(){
   <div class="ficha-head"><div class="avatar">${esc(ini)}</div><div class="grow" style="min-width:0"><span class="eyebrow">Ficha del paciente</span><h1>${esc(pacName(p))}</h1><div class="small muted num">${[p.dni&&'DNI '+p.dni,a!=null&&a+' años',p.obraSocial,p.telefono].filter(Boolean).map(esc).join(' · ')}</div></div>
     <div class="row">${p.telefono?`<a class="btn wa" href="https://wa.me/${waPhone(p.telefono)}" target="_blank" rel="noopener">${I.wa}WhatsApp</a>`:''}<button class="btn primary" data-a="newAppt" data-pac="${esc(p.id)}">${I.plus}Turno</button></div></div>
   ${!isSec()&&p.hc&&p.hc.alergias&&!/^(ninguna|no|-)/i.test(p.hc.alergias.trim())?`<div class="banner" style="background:var(--bad-soft)"><b>Alergias:</b> ${esc(p.hc.alergias)}</div>`:''}
-  <div class="tabs">${tabs.map(([k,l])=>`<button class="${S.pacTab===k?'on':''}" data-a="pacTab" data-t="${k}">${l}</button>`).join('')}</div>
+  ${tabsBar(tabs.map(([k,l])=>`<button class="${S.pacTab===k?'on':''}" data-a="pacTab" data-t="${k}">${l}</button>`).join(''))}
   ${body}`;
 }
 
@@ -600,7 +618,7 @@ function vConfig(){
     ${ej?`<div class="panel"><h3>Datos de ejemplo</h3><p class="small muted" style="margin-top:-6px">Hay ${ej} registros de ejemplo (pacientes, turnos y sesiones de muestra). Borralos cuando empieces a cargar pacientes reales.</p><button class="btn danger" data-a="clearDemo">Borrar datos de ejemplo</button></div>`:''}`;
   }
   return `<div class="head"><div class="t"><span class="eyebrow">Ajustes</span><h1>Configuración</h1></div></div>
-  <div class="tabs">${tabs.map(([k,l])=>`<button class="${t===k?'on':''}" data-a="cfgTab" data-t="${k}">${l}</button>`).join('')}</div>${body}`;
+  ${tabsBar(tabs.map(([k,l])=>`<button class="${t===k?'on':''}" data-a="cfgTab" data-t="${k}">${l}</button>`).join(''))}${body}`;
 }
 
 /* ---------- modales ---------- */
@@ -735,6 +753,7 @@ document.addEventListener('click',async e=>{
   if(!t){if(e.target.id==='modal')closeModal();return}
   const a=t.dataset.a,id=t.dataset.id;
   switch(a){
+    case 'tabsScroll':{const tb=t.parentElement.querySelector('.tabs');tb.scrollBy({left:(+t.dataset.d)*Math.max(120,tb.clientWidth*0.6),behavior:'smooth'});break}
     case 'nav':closeModal();S.view=t.dataset.v;window.scrollTo(0,0);render();break;
     case 'prev':case 'next':{const n=S.calMode==='dia'?1:7;S.date=addDays(S.date,a==='prev'?-n:n);render();break}
     case 'hoy':S.date=today();render();break;
