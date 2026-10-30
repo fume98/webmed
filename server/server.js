@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS docs(col TEXT, id TEXT, data TEXT, updatedAt TEXT, de
 CREATE INDEX IF NOT EXISTS docs_seq ON docs(seq);
 CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, userId TEXT, accion TEXT, col TEXT, docId TEXT, detalle TEXT);
 CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT);
+CREATE TABLE IF NOT EXISTS calfeeds(token TEXT PRIMARY KEY, userId TEXT UNIQUE, creado TEXT);
 `);
 
 /* ---------- utilidades ---------- */
@@ -195,6 +196,8 @@ const routes = {
     return { since: max, changes: out, rejected, more };
   },
 
+  'GET /api/calendario': (req, u) => calToken(u, false),
+  'POST /api/calendario/nuevo': (req, u) => calToken(u, true),
   'GET /api/users': (req, u) => { need(u, 'admin'); return { users: db.prepare('SELECT * FROM users ORDER BY nombre').all().map(publicUser) }; },
   'POST /api/users': async (req, u) => {
     need(u, 'admin');
@@ -280,6 +283,56 @@ function serveStatic(req, res, pathname) {
   fs.createReadStream(file).pipe(res);
 }
 
+/* ---------- calendario para Google Calendar (solo de ida: la agenda se publica, Google no escribe nada acá) ---------- */
+// Cada usuario tiene un enlace secreto /api/cal/<clave>.ics que Google Calendar lee cada tantas horas.
+function calToken(u, nuevo) {
+  if (u.rol === 'secretaria') throw Object.assign(new Error('No tenés permiso para esto.'), { status: 403 });
+  if (nuevo) db.prepare('DELETE FROM calfeeds WHERE userId=?').run(u.id);
+  let r = db.prepare('SELECT token FROM calfeeds WHERE userId=?').get(u.id);
+  if (!r) { r = { token: crypto.randomBytes(24).toString('base64url') }; db.prepare('INSERT INTO calfeeds(token,userId,creado) VALUES(?,?,?)').run(r.token, u.id, now()); audit(u.id, nuevo ? 'renovó enlace de calendario' : 'creó enlace de calendario'); }
+  return { path: '/api/cal/' + r.token + '.ics' };
+}
+const icsEsc = (s) => String(s == null ? '' : s).replace(/\\/g, '\\\\').replace(/;/g, '\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n');
+function icsFold(line) { // líneas de hasta 75 bytes, como pide el estándar
+  const out = []; let cur = '';
+  for (const ch of line) { if (Buffer.byteLength(cur + ch) > (out.length ? 74 : 75)) { out.push(cur); cur = ''; } cur += ch; }
+  out.push(cur); return out.join('\r\n ');
+}
+// Argentina está en UTC-3 todo el año: la hora local se pasa a UTC sumando 3 horas.
+function icsTime(fecha, min) {
+  const [y, m, d] = String(fecha).split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d, 3, min)).toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
+}
+const ESTADOS = { pendiente: 'A confirmar', confirmado: 'Confirmado', atendido: 'Atendido', ausente: 'Ausente', cancelado: 'Cancelado' };
+function calendarFeed(res, token) {
+  const f = db.prepare('SELECT * FROM calfeeds WHERE token=?').get(token);
+  const u = f && db.prepare('SELECT * FROM users WHERE id=?').get(f.userId);
+  if (!u || !u.activo || u.rol === 'secretaria') return send(res, 404, 'No encontrado');
+  const all = (col) => {
+    const m = new Map();
+    for (const r of db.prepare('SELECT id,data FROM docs WHERE col=? AND deleted=0').all(col)) { try { m.set(r.id, JSON.parse(r.data)); } catch (e) {} }
+    return m;
+  };
+  const pats = all('patients'), pros = all('professionals'), locs = all('locations');
+  const desde = new Date(Date.now() - 90 * 864e5).toISOString().slice(0, 10);
+  const L = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Agenda Dra Paulina Lopez//ES', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH',
+    'X-WR-CALNAME:Agenda Dra Paulina Lopez', 'X-WR-TIMEZONE:America/Argentina/Buenos_Aires', 'REFRESH-INTERVAL;VALUE=DURATION:PT1H', 'X-PUBLISHED-TTL:PT1H'];
+  const stamp = icsTime(now().slice(0, 10), 0);
+  for (const a of all('appointments').values()) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(a.fecha || '') || !/^\d{1,2}:\d{2}$/.test(a.hora || '') || a.estado === 'cancelado' || a.fecha < desde) continue;
+    const [h, mi] = a.hora.split(':').map(Number), ini = h * 60 + mi, fin = ini + (Number(a.duracion) || 30);
+    const p = pats.get(a.pacienteId) || {}, pr = pros.get(a.profesionalId) || {}, l = locs.get(a.lugarId) || {};
+    const nom = [p.apellido, p.nombre].filter(Boolean).join(', ') || 'Paciente';
+    const det = [pr.nombre && 'Profesional: ' + pr.nombre, a.motivo && 'Motivo: ' + a.motivo, p.telefono && 'Teléfono: ' + p.telefono, p.obraSocial && 'Obra social: ' + p.obraSocial, ESTADOS[a.estado] && 'Estado: ' + ESTADOS[a.estado]].filter(Boolean).join('\n');
+    L.push('BEGIN:VEVENT', 'UID:' + a.id + '@agenda-dra-lopez', 'DTSTAMP:' + stamp, 'DTSTART:' + icsTime(a.fecha, ini), 'DTEND:' + icsTime(a.fecha, fin),
+      'SUMMARY:' + icsEsc('Turno: ' + nom + (a.estado === 'pendiente' ? ' (a confirmar)' : '')), 'DESCRIPTION:' + icsEsc(det),
+      'LOCATION:' + icsEsc([l.nombre, l.direccion, l.ciudad].filter(Boolean).join(', ')), 'STATUS:' + (a.estado === 'pendiente' ? 'TENTATIVE' : 'CONFIRMED'), 'TRANSP:OPAQUE', 'END:VEVENT');
+  }
+  L.push('END:VCALENDAR');
+  res.writeHead(200, { 'Content-Type': 'text/calendar; charset=utf-8', 'Cache-Control': 'no-cache', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Robots-Tag': 'noindex' });
+  res.end(L.map(icsFold).join('\r\n') + '\r\n');
+}
+
 /* ---------- tiempo real: avisa a los equipos conectados cuando hay cambios ---------- */
 const listeners = new Set();
 let notifyTimer = null;
@@ -306,6 +359,8 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') return send(res, 204, '');
   if (req.method === 'GET' && url.pathname === '/api/events') return events(req, res, url);
   if (!url.pathname.startsWith('/api/')) return serveStatic(req, res, url.pathname);
+  const cm = req.method === 'GET' && url.pathname.match(/^\/api\/cal\/([\w-]{20,80})\.ics$/);
+  if (cm) { try { return calendarFeed(res, cm[1]); } catch (e) { console.error(e); return send(res, 500, 'Error'); } }
   try {
     const key = req.method + ' ' + url.pathname;
     const open = ['GET /api/status', 'POST /api/setup', 'POST /api/login'];

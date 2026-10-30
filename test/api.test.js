@@ -76,5 +76,31 @@ test('flujo completo', async () => {
     await call('/api/sync', { since: 0, changes: [{ col: 'attachments', doc: { id: 'adj_1', _deleted: true, updatedAt: '2026-03-02T00:00:00.000Z' } }] }, admin);
     await new Promise((r) => setTimeout(r, 50));
     assert.equal((await fetch(base + '/api/files/adj_1', { headers: { Authorization: 'Bearer ' + admin } })).status, 404);
+    // calendario para Google Calendar: enlace privado de solo lectura
+    await call('/api/sync', { since: 0, changes: [
+      { col: 'professionals', doc: { id: 'pr1', nombre: 'Dra Paulina Lopez', updatedAt: t1 } },
+      { col: 'locations', doc: { id: 'l1', nombre: 'Consultorio', direccion: 'San Martín 123, piso 2', ciudad: 'Santa Fe', updatedAt: t1 } },
+      { col: 'appointments', doc: { id: 'a1', pacienteId: 'p1', profesionalId: 'pr1', lugarId: 'l1', fecha: '2099-05-04', hora: '9:30', duracion: 45, motivo: 'Control; dolor, lumbar', estado: 'pendiente', updatedAt: t1 } },
+      { col: 'appointments', doc: { id: 'a2', pacienteId: 'p1', fecha: '2099-05-05', hora: '10:00', estado: 'cancelado', updatedAt: t1 } },
+    ] }, admin);
+    assert.equal((await call('/api/calendario', null, sec)).status, 403);
+    const c1 = await call('/api/calendario', null, admin);
+    assert.match(c1.body.path, /^\/api\/cal\/[\w-]{20,}\.ics$/);
+    assert.equal((await call('/api/calendario', null, admin)).body.path, c1.body.path);
+    const ics = await fetch(base + c1.body.path);
+    assert.equal(ics.status, 200);
+    assert.match(ics.headers.get('content-type'), /text\/calendar/);
+    const txt = await ics.text();
+    assert.match(txt, /^BEGIN:VCALENDAR\r\n/);
+    assert.match(txt, /UID:a1@agenda-dra-lopez/);
+    assert.match(txt, /DTSTART:20990504T123000Z\r\nDTEND:20990504T131500Z/);
+    assert.match(txt, /SUMMARY:Turno: Ana María \(a confirmar\)/);
+    assert.match(txt, /LOCATION:Consultorio\\, San Martín 123\\, piso 2\\, Santa Fe/);
+    assert.ok(!txt.includes('a2@'));
+    assert.ok(txt.split('\r\n').every((l) => Buffer.byteLength(l) <= 75));
+    const c2 = await call('/api/calendario/nuevo', {}, admin);
+    assert.notEqual(c2.body.path, c1.body.path);
+    assert.equal((await fetch(base + c1.body.path)).status, 404);
+    assert.equal((await fetch(base + c2.body.path)).status, 200);
   } finally { server.close(); }
 });

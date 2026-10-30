@@ -263,3 +263,6 @@ label.btn{cursor:pointer}
 .pal{display:flex;flex-direction:column;gap:8px;align-items:flex-start;border:1px solid var(--line);background:var(--surface);border-radius:12px;padding:12px;cursor:pointer;color:var(--ink);font-weight:500;text-align:left}
 .pal.on{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-soft)}
 .pal .sw{display:flex;gap:4px}.pal .sw i{width:24px;height:24px;border-radius:50%;border:1px solid rgba(0,0,0,.12)}
+/* pasos numerados (Google Calendar) */
+.steps{margin:8px 0 0;padding-left:20px;display:grid;gap:6px}
+.steps li::marker{color:var(--accent);font-weight:600}
