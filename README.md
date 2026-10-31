@@ -49,7 +49,11 @@ Costo: Railway da 5 USD de prueba gratis; después el plan Hobby cuesta 5 USD po
 4. Cuando termine (unos 5 minutos), arriba aparece la dirección `https://agenda-dra-lopez.onrender.com`. Ese es el link para la PC, el celular y la web. Entrá y creá la cuenta de administración.
 5. Cada cambio que se una a `main` se publica solo.
 
-## Ver la agenda en Google Calendar
+## Google Calendar en los dos sentidos
+
+**De Google a la agenda:** en **Configuración › Google Calendar › 1** se pega la *Dirección secreta en formato iCal* del calendario de Google (Google Calendar › ⚙ Configuración › tu calendario › Integrar el calendario). El servidor la lee cada 10 minutos (`GCAL_EVERY_MIN`) y los eventos aparecen en la agenda en gris, de solo lectura, con aviso si un turno se superpone. Se pueden conectar hasta 5 calendarios y asignar cada uno a un profesional. La secretaría los ve como "Ocupado". Funciona con cualquier servidor (internet o WiFi). Los turnos que vienen del propio enlace de la agenda se ignoran, así no se duplican.
+
+### De la agenda a Google Calendar
 
 En **Configuración › Google Calendar** cada usuario (administración o profesional) obtiene un enlace privado `/api/cal/<clave>.ics`. Con **Agregar a Google Calendar** aparece como un calendario aparte, también en el celular.
 

@@ -278,3 +278,18 @@ label.btn{cursor:pointer}
 .tabs-arr svg{width:14px;height:14px}
 .tabs-arr.l svg{transform:rotate(180deg)}
 .can-l .tabs-arr.l,.can-r .tabs-arr.r{opacity:1;pointer-events:auto}
+/* eventos de Google Calendar en la agenda (solo lectura) */
+.ev.gev{--gc:var(--muted);border-left:3px solid var(--gc);border-style:dashed dashed dashed solid;border-color:color-mix(in srgb,var(--gc) 45%,transparent);border-left-color:var(--gc);background:repeating-linear-gradient(135deg,color-mix(in srgb,var(--gc) 9%,var(--surface)) 0 6px,color-mix(in srgb,var(--gc) 4%,var(--surface)) 6px 12px);color:var(--muted)}
+.ev.gev b{color:var(--ink);font-weight:500}
+.ev.gev:hover{border-color:var(--gc)}
+.cal-headrow .gday{display:block;width:100%;margin-top:4px;padding:2px 6px;border-radius:6px;border:1px dashed color-mix(in srgb,var(--muted) 55%,transparent);background:color-mix(in srgb,var(--muted) 8%,var(--surface));color:var(--ink);font-size:.7rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;text-align:left}
+.gtoggle i{display:inline-block;width:10px;height:10px;border-radius:3px;border:1.5px dashed var(--muted);margin-right:6px;vertical-align:-1px}
+.gtoggle.on i{background:color-mix(in srgb,var(--muted) 25%,transparent);border-style:solid}
+.gtoggle:not(.on){opacity:.65}
+.gfeed{align-items:center;flex-wrap:wrap}
+.gfeed .gurl{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%;font-size:.7rem;opacity:.8}
+.gdot{width:10px;height:10px;border-radius:50%;background:var(--ok);flex:none}
+.gdot.bad{background:var(--bad)}
+.gsteps{margin-top:12px}
+.gsteps summary{cursor:pointer;color:var(--accent);font-weight:500}
+.gform{margin-top:12px;display:grid;gap:10px}

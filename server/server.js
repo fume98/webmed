@@ -193,10 +193,34 @@ const routes = {
       out.push({ col: r.col, doc: r.deleted ? { id: r.id, _deleted: true } : shapeOut(u, r.col, JSON.parse(r.data)) });
     }
     const more = rows.length === 5000;
-    return { since: max, changes: out, rejected, more };
+    return { since: max, changes: out, rejected, more, gcalVer: metaGet('gcalEvents', { ver: '' }).ver || '' };
   },
 
   'GET /api/calendario': (req, u) => calToken(u, false),
+  'GET /api/gcal': (req, u) => {
+    const d = metaGet('gcalEvents', { ver: '', events: [] });
+    const events = d.events.map(({ feed, ...e }) => (u.rol === 'secretaria' ? { ...e, titulo: 'Ocupado', lugar: '' } : e));
+    return { ver: d.ver || '', events };
+  },
+  'GET /api/gcal-config': (req, u) => { notSec(u); return gcalConfigOut(); },
+  'POST /api/gcal-config': async (req, u) => {
+    notSec(u);
+    const b = await readJson(req), cfg = metaGet('gcalIn', { feeds: [] });
+    if (b.remove) { cfg.feeds = cfg.feeds.filter((f) => f.id !== b.remove); audit(u.id, 'quitó calendario de Google'); }
+    else if (b.id && 'profesionalId' in b) { const f = cfg.feeds.find((x) => x.id === b.id); if (f) f.profesionalId = String(b.profesionalId || ''); }
+    else {
+      const url = String(b.url || '').trim().replace(/^webcal:/i, 'https:');
+      if (!gcalUrlOk(url)) throw Object.assign(new Error('Esa no es la dirección secreta en formato iCal de Google Calendar. Tiene que empezar con https://calendar.google.com/calendar/ical/ y terminar en basic.ics.'), { status: 400 });
+      if (cfg.feeds.some((f) => f.url === url)) throw Object.assign(new Error('Ese calendario ya está conectado.'), { status: 409 });
+      if (cfg.feeds.length >= 5) throw Object.assign(new Error('Podés conectar hasta 5 calendarios.'), { status: 400 });
+      cfg.feeds.push({ id: uid('gc'), url, profesionalId: String(b.profesionalId || ''), creado: now() });
+      audit(u.id, 'conectó calendario de Google');
+    }
+    metaSet('gcalIn', cfg);
+    await gcalRefresh();
+    return gcalConfigOut();
+  },
+  'POST /api/gcal-refresh': async (req, u) => { notSec(u); await gcalRefresh(); return gcalConfigOut(); },
   'POST /api/calendario/nuevo': (req, u) => calToken(u, true),
   'GET /api/users': (req, u) => { need(u, 'admin'); return { users: db.prepare('SELECT * FROM users ORDER BY nombre').all().map(publicUser) }; },
   'POST /api/users': async (req, u) => {
@@ -332,6 +356,52 @@ function calendarFeed(res, token) {
   res.writeHead(200, { 'Content-Type': 'text/calendar; charset=utf-8', 'Cache-Control': 'no-cache', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Robots-Tag': 'noindex' });
   res.end(L.map(icsFold).join('\r\n') + '\r\n');
 }
+
+/* ---------- Google Calendar → plataforma: lee la dirección secreta iCal y trae los eventos (solo lectura) ---------- */
+const gcalIn = require('./gcal-in.js');
+const GCAL_EVERY_MIN = Number(process.env.GCAL_EVERY_MIN || 10);
+const metaGet = (k, d) => { const r = db.prepare('SELECT v FROM meta WHERE k=?').get(k); try { return r ? JSON.parse(r.v) : d; } catch (e) { return d; } };
+const metaSet = (k, v) => db.prepare('INSERT INTO meta(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v').run(k, JSON.stringify(v));
+const gcalUrlOk = (u) => /^https:\/\/calendar\.google\.com\/calendar\/ical\/[^\s?#]+\/basic\.ics$/.test(u) || (process.env.AGENDA_GCAL_ANY_URL === '1' && /^https?:\/\/\S+$/.test(u));
+const maskUrl = (u) => u.replace(/(private-)[0-9a-f]+/i, '$1••••••').replace(/(\/ical\/)([^/]{3})[^/]*(@|%40)/, '$1$2•••$3');
+let gcalBusy = null;
+function gcalRefresh() {
+  if (gcalBusy) return gcalBusy;
+  gcalBusy = (async () => {
+    const cfg = metaGet('gcalIn', { feeds: [] }), prev = metaGet('gcalEvents', { ver: '', events: [], status: {} });
+    const fromMs = Date.now() - 60 * 864e5, toMs = Date.now() + 400 * 864e5;
+    const events = [], status = {};
+    for (const f of cfg.feeds) {
+      try {
+        const r = await fetch(f.url, { signal: AbortSignal.timeout(20000), headers: { 'User-Agent': 'agenda-dra-paulina-lopez' } });
+        if (!r.ok) throw new Error(r.status === 404 ? 'Google no encontró ese calendario. Revisá que la dirección esté completa.' : 'Google respondió con un error (' + r.status + ').');
+        const text = await r.text();
+        if (text.length > 15 * 1024 * 1024) throw new Error('El calendario es demasiado grande.');
+        if (!/BEGIN:VCALENDAR/i.test(text)) throw new Error('La dirección no es un calendario iCal.');
+        const evs = gcalIn.eventsFromIcs(text, { fromMs, toMs, skipUid: /@agenda-dra-lopez$/ });
+        for (const e of evs) events.push({ id: 'g' + sha(f.id + '|' + e.key + '|' + e.seg).slice(0, 18), fecha: e.fecha, hora: e.hora, duracion: e.duracion, allDay: e.allDay, titulo: e.titulo, lugar: e.lugar, profesionalId: f.profesionalId || '', feed: f.id });
+        status[f.id] = { ok: true, at: now(), count: evs.length };
+      } catch (e) {
+        // si Google no responde se mantienen los eventos que ya teníamos de ese calendario
+        for (const ev of prev.events) if (ev.feed === f.id) events.push({ ...ev, profesionalId: f.profesionalId || '' });
+        status[f.id] = { ok: false, at: now(), error: e.name === 'TimeoutError' ? 'Google tardó demasiado en responder.' : e.message, lastOk: prev.status && prev.status[f.id] && (prev.status[f.id].ok ? prev.status[f.id].at : prev.status[f.id].lastOk) };
+      }
+    }
+    events.sort((a, b) => (a.fecha + a.hora).localeCompare(b.fecha + b.hora) || a.id.localeCompare(b.id));
+    const ver = events.length || cfg.feeds.length ? sha(JSON.stringify(events)).slice(0, 12) : '';
+    metaSet('gcalEvents', { ver, events, status });
+    if (ver !== prev.ver) notify();
+    return ver;
+  })().finally(() => { gcalBusy = null; });
+  return gcalBusy;
+}
+function gcalConfigOut() {
+  const cfg = metaGet('gcalIn', { feeds: [] }), ev = metaGet('gcalEvents', { status: {} });
+  return { feeds: cfg.feeds.map((f) => ({ id: f.id, url: maskUrl(f.url), profesionalId: f.profesionalId || '', ...(ev.status && ev.status[f.id]) })) };
+}
+const notSec = (u) => { if (u.rol === 'secretaria') throw Object.assign(new Error('No tenés permiso para esto.'), { status: 403 }); };
+setTimeout(() => { if (metaGet('gcalIn', { feeds: [] }).feeds.length) gcalRefresh().catch((e) => console.error(e)); }, 3000).unref();
+setInterval(() => { if (metaGet('gcalIn', { feeds: [] }).feeds.length) gcalRefresh().catch((e) => console.error(e)); }, GCAL_EVERY_MIN * 60e3).unref();
 
 /* ---------- tiempo real: avisa a los equipos conectados cuando hay cambios ---------- */
 const listeners = new Set();

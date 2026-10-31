@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'agenda-'));
+process.env.AGENDA_GCAL_ANY_URL = '1';
 const { server } = require('../server/server.js');
 
 let base;
@@ -102,5 +103,48 @@ test('flujo completo', async () => {
     assert.notEqual(c2.body.path, c1.body.path);
     assert.equal((await fetch(base + c1.body.path)).status, 404);
     assert.equal((await fetch(base + c2.body.path)).status, 200);
+    // Google Calendar → plataforma: se conecta la dirección iCal y los eventos llegan a todos (la secretaria solo ve "Ocupado")
+    const dd = new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10), dc = dd.replace(/-/g, '');
+    let icsBody = 'BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:g1@google.com\r\nDTSTART;TZID=America/Argentina/Buenos_Aires:' + dc + 'T150000\r\nDTEND;TZID=America/Argentina/Buenos_Aires:' + dc + 'T163000\r\nSUMMARY:Dentista\r\nLOCATION:Centro\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nUID:a1@agenda-dra-lopez\r\nDTSTART:' + dc + 'T120000Z\r\nDTEND:' + dc + 'T130000Z\r\nSUMMARY:Turno propio\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n';
+    const http = require('node:http');
+    const icsSrv = http.createServer((q, r) => { r.writeHead(200, { 'Content-Type': 'text/calendar' }); r.end(icsBody); });
+    await new Promise((r) => icsSrv.listen(0, r));
+    try {
+      process.env.AGENDA_GCAL_ANY_URL = '';
+      assert.equal((await call('/api/gcal-config', { url: 'https://evil.example.com/x.ics' }, admin)).status, 400);
+      process.env.AGENDA_GCAL_ANY_URL = '1';
+      assert.equal((await call('/api/gcal-config', null, sec)).status, 403);
+      const icsUrl = 'http://localhost:' + icsSrv.address().port + '/basic.ics';
+      let g = await call('/api/gcal-config', { url: icsUrl, profesionalId: 'pr1' }, admin);
+      assert.equal(g.status, 200);
+      assert.equal(g.body.feeds.length, 1);
+      assert.equal(g.body.feeds[0].ok, true);
+      assert.equal(g.body.feeds[0].count, 1);
+      assert.equal((await call('/api/gcal-config', { url: icsUrl }, admin)).status, 409);
+      const sy = await call('/api/sync', { since: 0 }, admin);
+      assert.ok(sy.body.gcalVer);
+      let ge = await call('/api/gcal', null, admin);
+      assert.equal(ge.body.ver, sy.body.gcalVer);
+      assert.deepEqual(ge.body.events.map((e) => [e.fecha, e.hora, e.duracion, e.titulo, e.lugar, e.profesionalId]), [[dd, '15:00', 90, 'Dentista', 'Centro', 'pr1']]);
+      assert.equal(ge.body.events[0].feed, undefined);
+      const gs = await call('/api/gcal', null, sec);
+      assert.equal(gs.body.events[0].titulo, 'Ocupado');
+      assert.equal(gs.body.events[0].lugar, '');
+      // cambia en Google → cambia la versión
+      icsBody = icsBody.replace('Dentista', 'Dentista (movido)');
+      await call('/api/gcal-refresh', {}, admin);
+      ge = await call('/api/gcal', null, admin);
+      assert.notEqual(ge.body.ver, sy.body.gcalVer);
+      assert.equal(ge.body.events[0].titulo, 'Dentista (movido)');
+      // si Google falla, se mantienen los eventos anteriores y se avisa el error
+      icsSrv.close();
+      g = await call('/api/gcal-refresh', {}, admin);
+      assert.equal(g.body.feeds[0].ok, false);
+      assert.ok(g.body.feeds[0].error);
+      assert.equal((await call('/api/gcal', null, admin)).body.events.length, 1);
+      g = await call('/api/gcal-config', { remove: g.body.feeds[0].id }, admin);
+      assert.equal(g.body.feeds.length, 0);
+      assert.equal((await call('/api/gcal', null, admin)).body.events.length, 0);
+    } finally { icsSrv.close(); }
   } finally { server.close(); }
 });
