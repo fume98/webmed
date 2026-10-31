@@ -62,6 +62,7 @@ const proColor=id=>(get('professionals',id)||{}).color||'#A0674B';
 const LS={get(k,d){try{const v=localStorage.getItem('pl_'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('pl_'+k,JSON.stringify(v))}catch(e){}},del(k){try{localStorage.removeItem('pl_'+k)}catch(e){}}};
 const ST={mode:LS.get('mode',''),server:LS.get('server',''),token:LS.get('token',''),user:LS.get('user',null),since:LS.get('since',0),
   sync:'idle',lastSync:LS.get('lastSync',''),pending:0,syncing:false,timer:null,idb:null};
+ST.gcal=LS.get('gcal',{ver:'',events:[]});S.showG=LS.get('showG',true);
 const IS_DESKTOP=!!(window.agendaDesktop)||location.protocol==='file:';
 function idbOpen(){return new Promise((res,rej)=>{if(!('indexedDB' in window))return rej(new Error('Sin IndexedDB'));const r=indexedDB.open('agenda-pl',2);r.onupgradeneeded=()=>{const d=r.result;for(const n of ['docs','outbox','blobs'])if(!d.objectStoreNames.contains(n))d.createObjectStore(n,{keyPath:'k'})};r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)})}
 function idbTx(store,mode,fn){return new Promise((res,rej)=>{const tx=ST.idb.transaction(store,mode);const s=tx.objectStore(store);const out=fn(s);tx.oncomplete=()=>res(out&&out.result!==undefined?out.result:undefined);tx.onerror=()=>rej(tx.error)})}
@@ -112,11 +113,11 @@ async function sync(){
   if(navigator.onLine===false){ST.sync='offline';renderSoft();return}
   ST.syncing=true;ST.sync='syncing';renderStatus();
   try{
-    let more=true,guard=0;
+    let more=true,guard=0,gv;
     while(more&&guard++<50){
       const box=await idbAll('outbox');
       const sent=new Map(box.map(b=>[b.k,b.doc.updatedAt]));
-      const j=await api('/api/sync',{since:ST.since,changes:box.map(b=>({col:b.col,doc:b.doc}))});
+      const j=await api('/api/sync',{since:ST.since,changes:box.map(b=>({col:b.col,doc:b.doc}))});gv=j.gcalVer;
       // quitar de la cola lo que ya se envió (si no se volvió a editar mientras tanto)
       const now=await idbAll('outbox');const done=now.filter(b=>sent.get(b.k)===b.doc.updatedAt).map(b=>b.k);
       await idbDelMany('outbox',done);const pend=new Set(now.filter(b=>!done.includes(b.k)).map(b=>b.k));
@@ -129,6 +130,7 @@ async function sync(){
       ST.pending=pend.size;more=!!j.more||(j.rejected&&j.rejected.length&&guard<2);
     }
     await uploadBlobs();
+    if(gv!==undefined&&gv!==ST.gcal.ver){try{const g=await api('/api/gcal');ST.gcal={ver:g.ver,events:g.events||[]};LS.set('gcal',ST.gcal)}catch(e){}}
     ST.sync='ok';ST.lastSync=new Date().toISOString();LS.set('lastSync',ST.lastSync);
     await seedBase();
   }catch(e){
@@ -440,26 +442,29 @@ function vAgenda(){
     for(let i=0;i<n;i++){const d=addDays(ws,i);cols.push({date:d,pro:'',label:`${DIAS_C[pd(d).getDay()]} <b>${pd(d).getDate()}</b>`})}
   }
   let h0=toMin(c.horaInicio),h1=toMin(c.horaFin);
-  const visible=all.filter(a=>cols.some(cl=>cl.date===a.fecha));
+  const gAll=gEvents().filter(g=>cols.some(cl=>cl.date===g.fecha));
+  const visible=[...all,...gAll.filter(g=>!g.allDay)].filter(a=>cols.some(cl=>cl.date===a.fecha));
   visible.forEach(a=>{h0=Math.min(h0,Math.floor(toMin(a.hora)/60)*60);h1=Math.max(h1,Math.ceil((toMin(a.hora)+(+a.duracion||30))/60)*60)});
   h0=Math.floor(h0/60)*60;h1=Math.ceil(h1/60)*60;
   const PX=1.8,H=(h1-h0)*PX,tmpl=`54px repeat(${cols.length},minmax(${isDay?140:96}px,1fr))`;
   const hours=[];for(let m=h0;m<=h1;m+=60)hours.push(`<span style="top:${(m-h0)*PX}px">${fromMin(m)}</span>`);
   const nowM=new Date().getHours()*60+new Date().getMinutes();
   const colHtml=cols.map(cl=>{
-    let evs=all.filter(a=>a.fecha===cl.date&&(!cl.pro||cl.single||a.profesionalId===cl.pro)).sort((a,b)=>toMin(a.hora)-toMin(b.hora));
+    let evs=[...all.filter(a=>a.fecha===cl.date&&(!cl.pro||cl.single||a.profesionalId===cl.pro)),...gAll.filter(g=>!g.allDay&&g.fecha===cl.date&&(!cl.pro||cl.single||!g.profesionalId||g.profesionalId===cl.pro)).map(g=>({...g,_g:1}))].sort((a,b)=>toMin(a.hora)-toMin(b.hora));
     // carriles para turnos superpuestos
     const lanes=[];let groups=[],cur=[],curEnd=-1;
     evs.forEach(a=>{const s=toMin(a.hora),e=s+(+a.duracion||30);if(s>=curEnd&&cur.length){groups.push(cur);cur=[]}cur.push(a);curEnd=Math.max(curEnd,e)});if(cur.length)groups.push(cur);
     let out='';
     groups.forEach(g=>{const ends=[];g.forEach(a=>{const s=toMin(a.hora);let li=ends.findIndex(e=>e<=s);if(li<0){li=ends.length;ends.push(0)}ends[li]=s+(+a.duracion||30);a._l=li});const n=ends.length;
-      g.forEach(a=>{const s=toMin(a.hora),dur=+a.duracion||30,p=get('patients',a.pacienteId),l=get('locations',a.lugarId);
+      g.forEach(a=>{const s=toMin(a.hora),dur=+a.duracion||30;
+        if(a._g){out+=`<button class="ev gev" data-a="gev" data-id="${esc(a.id)}" style="top:${(s-h0)*PX+1}px;height:${Math.max(dur*PX-2,22)}px;left:calc(${a._l*100/n}% + 3px);width:calc(${100/n}% - 6px)" title="${esc(a.titulo)} · Google Calendar"><b>${esc(a.titulo)}</b><span class="t">${esc(a.hora)} hs · Google</span></button>`;return}
+        const p=get('patients',a.pacienteId),l=get('locations',a.lugarId);
         out+=`<button class="ev st-${esc(a.estado)}" data-a="appt" data-id="${esc(a.id)}" style="--pc:${esc(proColor(a.profesionalId))};top:${(s-h0)*PX+1}px;height:${Math.max(dur*PX-2,22)}px;left:calc(${a._l*100/n}% + 3px);width:calc(${100/n}% - 6px)">
         <b>${esc(pacName(p))}</b><span class="t">${esc(a.hora)} hs${dur>=45?' · '+dur+' min':''}</span>${dur>=45?`<span class="x">${esc(a.motivo||'')}${l&&!S.fLoc?' · '+esc(l.nombre):''}</span>`:''}</button>`})});
     const isT=cl.date===today();
     return `<div class="col ${isT?'today':''}" data-a="slot" data-date="${cl.date}" data-pro="${esc(cl.pro)}" data-h0="${h0}" style="height:${H}px">${isT&&nowM>=h0&&nowM<=h1?`<div class="now" style="top:${(nowM-h0)*PX}px"></div>`:''}${out}</div>`;
   }).join('');
-  const head=`<div class="cal-headrow" style="grid-template-columns:${tmpl}"><div></div>${cols.map(cl=>`<div class="${cl.date===today()&&!isDay?'today':''}">${cl.label}</div>`).join('')}</div>`;
+  const head=`<div class="cal-headrow" style="grid-template-columns:${tmpl}"><div></div>${cols.map(cl=>`<div class="${cl.date===today()&&!isDay?'today':''}">${cl.label}${gAll.filter(g=>g.allDay&&g.fecha===cl.date&&(!cl.pro||cl.single||!g.profesionalId||g.profesionalId===cl.pro)).map(g=>`<button class="gday" data-a="gev" data-id="${esc(g.id)}" title="${esc(g.titulo)} · Google Calendar">${esc(g.titulo)}</button>`).join('')}</div>`).join('')}</div>`;
   // resumen del día
   const dayA=all.filter(a=>a.fecha===D&&a.estado!=='cancelado');
   const cobr=list('payments').filter(p=>p.fecha===D&&p.estado!=='pendiente'&&(!S.fPro||p.profesionalId===S.fPro)).reduce((s,p)=>s+(+p.monto||0),0);
@@ -478,6 +483,7 @@ function vAgenda(){
     <input type="date" id="agDate" value="${D}" class="sel-inline" style="width:auto" aria-label="Ir a fecha">
     <div class="seg"><button class="${isDay?'on':''}" data-a="mode" data-m="dia">Día</button><button class="${!isDay?'on':''}" data-a="mode" data-m="semana">Semana</button></div>
     <span class="grow"></span>
+    ${ST.gcal.events.length?`<button class="btn sm gtoggle ${S.showG?'on':''}" data-a="toggleG" aria-pressed="${S.showG?'true':'false'}" title="Mostrar u ocultar los eventos de Google Calendar"><i></i>Google</button>`:''}
     <select id="fPro" class="sel-inline" aria-label="Profesional"><option value="">Todos los profesionales</option>${pros().map(p=>`<option value="${esc(p.id)}" ${S.fPro===p.id?'selected':''}>${esc(p.nombre)}</option>`).join('')}</select>
     <select id="fLoc" class="sel-inline" aria-label="Lugar"><option value="">Todos los lugares</option>${locs().map(l=>`<option value="${esc(l.id)}" ${S.fLoc===l.id?'selected':''}>${esc(l.nombre)}</option>`).join('')}</select>
   </div>
@@ -652,11 +658,21 @@ function mAppt(a,prefill){
   </div><div class="mf">${!isNew?`<button type="button" class="btn danger" data-a="askDel" data-col="appointments" data-id="${esc(a.id)}">Eliminar</button><span class="grow"></span>`:''}<button type="button" class="btn ghost" data-a="close">Cancelar</button>${isNew?`<button type="submit" class="btn" name="go" value="save">Guardar</button><button type="submit" class="btn wa" name="go" value="wa">${I.wa}Guardar y enviar</button>`:`<button type="submit" class="btn primary">Guardar cambios</button>`}</div></form>`,true);
   checkOverlap();
 }
+/* eventos que vienen de Google Calendar (solo lectura) */
+function gEvents(){if(S.showG===false)return [];return (ST.gcal.events||[]).filter(g=>!S.fPro||!g.profesionalId||g.profesionalId===S.fPro)}
+function mGev(g){
+  const fin=g.allDay?'':fromMin(toMin(g.hora)+(+g.duracion||0)),pr=get('professionals',g.profesionalId);
+  openModal(`${mHead(esc(g.titulo))}<div class="mb"><dl class="kv">${kv('Fecha',cap(fLarga(g.fecha)))}${kv('Horario',g.allDay?'Todo el día':`${g.hora} a ${fin} hs`)}${g.lugar?kv('Lugar',g.lugar):''}${pr?kv('Profesional',pr.nombre):''}</dl>
+  <p class="small muted" style="margin:12px 0 0">Este evento viene de Google Calendar. Para cambiarlo o borrarlo, hacelo en Google Calendar: la agenda se actualiza sola en unos minutos.</p></div>
+  <div class="mf">${!g.allDay&&!isSec()?`<button class="btn" data-a="gevNew" data-id="${esc(g.id)}">${I.plus}Turno en este horario</button>`:''}<span class="grow"></span><button class="btn primary" data-a="close">Listo</button></div>`)}
 function checkOverlap(){
   const f=$('form[data-form=appt]');if(!f)return;const w=$('#apWarn');
   const d=$('#apFecha').value,h=toMin($('#apHora').value),e=h+(+$('#apDur').value||30),pr=$('#apPro').value,id=f.dataset.id;
   const clash=list('appointments').find(a=>a.id!==id&&a.fecha===d&&a.profesionalId===pr&&a.estado!=='cancelado'&&toMin(a.hora)<e&&toMin(a.hora)+(+a.duracion||30)>h);
-  w.hidden=!clash;if(clash)w.textContent=`Atención: se superpone con el turno de ${pacName(get('patients',clash.pacienteId))} a las ${clash.hora}.`;
+  const gd=(ST.gcal.events||[]).filter(g=>g.fecha===d&&(!g.profesionalId||g.profesionalId===pr));
+  const gc=!clash&&(gd.find(g=>!g.allDay&&toMin(g.hora)<e&&toMin(g.hora)+(+g.duracion||0)>h)||gd.find(g=>g.allDay));
+  w.hidden=!clash&&!gc;if(clash)w.textContent=`Atención: se superpone con el turno de ${pacName(get('patients',clash.pacienteId))} a las ${clash.hora}.`;
+  else if(gc)w.textContent=gc.allDay?`Atención: ese día tenés «${gc.titulo}» en Google Calendar.`:`Atención: se superpone con «${gc.titulo}» de Google Calendar (${gc.hora} hs).`;
 }
 function mApptView(a){
   const p=get('patients',a.pacienteId),pr=get('professionals',a.profesionalId)||{},l=get('locations',a.lugarId)||{};
@@ -765,6 +781,11 @@ document.addEventListener('click',async e=>{
     case 'setEst':{const x=get('appointments',id);if(x){await save('appointments',{...x,estado:t.dataset.e});mApptView(get('appointments',id));toast('Estado actualizado')}break}
     case 'waAppt':{const x=get('appointments',id),p=x&&get('patients',x.pacienteId);if(x)mWa(p&&p.telefono,msgTurno(x),x.id,pacName(p));break}
     case 'waAll':{const p=get('patients',t.dataset.pac);mWa(p.telefono,msgProximos(p.id),'',pacName(p));break}
+    case 'gev':{const g=(ST.gcal.events||[]).find(x=>x.id===id);if(g)mGev(g);break}
+    case 'gevNew':{const g=(ST.gcal.events||[]).find(x=>x.id===id);closeModal();if(g)mAppt(null,{fecha:g.fecha,hora:g.hora,duracion:+g.duracion||cfg().duracion,...(g.profesionalId?{profesionalId:g.profesionalId}:{})});break}
+    case 'toggleG':{S.showG=!S.showG;LS.set('showG',S.showG);render();break}
+    case 'gcfgDel':{if(S.gcfgSure!==id){S.gcfgSure=id;render();break}S.gcfgSure='';await gcfgCall({remove:id});break}
+    case 'gcfgRefresh':{S.gcfgBusy=true;render();await gcfgCall(null,true);break}
     case 'gcalCopy':{try{await navigator.clipboard.writeText(S.gcal);toast('Enlace copiado')}catch(err){const i=$('#gcalUrl');i.focus();i.select();toast('Seleccioné el enlace: copialo con Ctrl+C')}break}
     case 'gcalNew':{if(!S.gcalSure){S.gcalSure=true;render();break}await gcalLoad(true);break}
     case 'gcalRetry':{S.gcal=undefined;S.gcalErr='';render();break}
@@ -812,7 +833,7 @@ document.addEventListener('click',async e=>{
     case 'chooseLocal':ST.mode='local';LS.set('mode','local');S.screen=null;await loadFromDevice();await seedBase();render();break;
     case 'resetMode':ST.mode='';LS.del('mode');S.screen='mode';render();break;
     case 'logout':openModal(`${mHead('¿Cerrar sesión?')}<div class="mb"><p style="margin:0">${ST.pending?`<b>Hay ${ST.pending} cambios que todavía no se subieron al servidor y se van a perder.</b> Conectate a internet y sincronizá antes de salir. `:''}Al cerrar sesión se borra la copia de los datos guardada en este equipo.</p></div><div class="mf"><button class="btn ghost" data-a="close">Cancelar</button><button class="btn primary" data-a="doLogout">Cerrar sesión</button></div>`);break;
-    case 'doLogout':{closeModal();if(ES){ES.close();ES=null}try{await api('/api/logout',{})}catch(e){}ST.token='';ST.user=null;ST.since=0;ST.pending=0;['token','user','since','lastSync'].forEach(k=>LS.del(k));if(ST.idb){await idbClear('docs');await idbClear('outbox')}COLS.forEach(c=>S.data[c]={});S.gcal=undefined;S.gcalErr='';S.screen='login';S.view='agenda';render();break}
+    case 'doLogout':{closeModal();if(ES){ES.close();ES=null}try{await api('/api/logout',{})}catch(e){}ST.token='';ST.user=null;ST.since=0;ST.pending=0;['token','user','since','lastSync'].forEach(k=>LS.del(k));if(ST.idb){await idbClear('docs');await idbClear('outbox')}COLS.forEach(c=>S.data[c]={});S.gcal=undefined;S.gcalErr='';S.gcfg=undefined;ST.gcal={ver:'',events:[]};LS.del('gcal');S.screen='login';S.view='agenda';render();break}
     case 'chgPass':openModal(`${mHead('Cambiar mi contraseña')}<form data-form="chgPass"><div class="mb"><label class="f">Contraseña actual<input type="password" id="cp_a" name="actual" required autocomplete="current-password"></label><label class="f">Nueva contraseña (mínimo 8)<input type="password" id="cp_n" name="nueva" minlength="8" required autocomplete="new-password"></label></div><div class="mf"><button type="button" class="btn ghost" data-a="close">Cancelar</button><button class="btn primary" type="submit">Guardar</button></div></form>`);break;
     case 'newUser':mUser();break;
     case 'editUser':mUser((S.users||[]).find(u=>u.id===id));break;
@@ -835,6 +856,7 @@ document.addEventListener('change',async e=>{
   const t=e.target;
   if(t.id==='agDate'&&t.value){S.date=t.value;render()}
   else if(t.id==='fPro'){S.fPro=t.value;render()}
+  else if(t.dataset&&t.dataset.gfeed){await gcfgCall({id:t.dataset.gfeed,profesionalId:t.value});toast('Guardado')}
   else if(t.id==='fLoc'){S.fLoc=t.value;render()}
   else if(t.id==='payMonth'&&t.value){S.payMonth=t.value;render()}
   else if(t.id==='payMet'){S.payMet=t.value;render()}
@@ -868,6 +890,13 @@ document.addEventListener('submit',async e=>{
     const body={nombre:d.nombre,rol:d.rol};if(d.password)body.password=d.password;
     try{if(id){body.activo=!!d.activo;await api('/api/users/'+id,body,'PATCH')}else{body.email=d.email;await api('/api/users',body)}closeModal();toast('Usuario guardado');loadUsers()}
     catch(err){toast(err.status?err.message:'Necesitás conexión para administrar usuarios.','err')}
+    return;
+  }
+  if(k==='gcfg'){
+    if(!d.url){toast('Pegá la dirección secreta en formato iCal','err');return}
+    const btn=f.querySelector('[type=submit]');if(btn){btn.disabled=true;btn.textContent='Conectando…'}
+    const ok=await gcfgCall({url:d.url,profesionalId:d.profesionalId||''});
+    if(ok){toast('Calendario de Google conectado');scheduleSync(0)}else if(btn){btn.disabled=false;btn.textContent='Conectar'}
     return;
   }
   if(k==='appt'){
@@ -986,14 +1015,38 @@ async function gcalLoad(nuevo){
   catch(e){S.gcal='';S.gcalErr=e.message||'No se pudo obtener el enlace.'}
   S.gcalSure=false;render();
 }
-function vGcal(){
-  const intro=`<p class="small muted" style="margin-top:-6px">Los turnos de la plataforma aparecen en tu Google Calendar como un calendario aparte. Es solo de ida: lo que tengas en Google Calendar no se ve en la plataforma.</p>`;
-  if(ST.mode!=='server')return `<div class="panel"><h3>Ver la agenda en Google Calendar</h3>${intro}<p>Para esto la agenda tiene que estar en el servidor de internet (la versión web). En el modo "solo en este equipo" Google no puede leer los turnos.</p></div>`;
-  if(privHost(ST.server))return `<div class="panel"><h3>Ver la agenda en Google Calendar</h3>${intro}<p>Este equipo está conectado a un servidor de la red de tu casa o consultorio (${esc(ST.server)}), y Google no puede entrar ahí. Activalo desde la versión web publicada en internet.</p></div>`;
+function vGcal(){return `<p class="muted" style="margin:0 0 14px">La agenda y Google Calendar se pueden ver juntas en los dos lugares. Son dos conexiones: activá las dos para que todo aparezca en ambos.</p>`+vGcalIn()+vGcalOut()}
+async function gcfgCall(body,refresh){
+  try{S.gcfg=await api(refresh?'/api/gcal-refresh':'/api/gcal-config',body||(refresh?{}:null));S.gcfgErr='';if(body||refresh)scheduleSync(0);S.gcfgBusy=false;render();return true}
+  catch(e){S.gcfgBusy=false;if(body){toast(e.message||'No se pudo conectar','err')}else{S.gcfgErr=e.message||'No se pudo cargar'}render();return false}
+}
+const hace=iso=>{if(!iso)return '';const m=Math.round((Date.now()-Date.parse(iso))/60000);return m<1?'recién':m<60?`hace ${m} min`:m<1440?`hace ${Math.round(m/60)} h`:new Date(iso).toLocaleString('es-AR')};
+function vGcalIn(){
+  const h3=`<h3>1. De Google Calendar a la agenda</h3><p class="small muted" style="margin-top:-6px">Tus eventos de Google Calendar aparecen en la agenda en gris, para que no des turnos encima. Se actualizan solos cada 10 minutos y se modifican desde Google.</p>`;
+  if(ST.mode!=='server')return `<div class="panel">${h3}<p>Para esto la agenda tiene que estar conectada a un servidor (la versión web o el modo compartido por WiFi).</p></div>`;
+  if(S.gcfg===undefined){S.gcfg=null;gcfgCall()}
+  if(!S.gcfg)return `<div class="panel">${h3}<p class="${S.gcfgErr?'':'muted'}">${esc(S.gcfgErr||'Cargando…')}</p></div>`;
+  const proSel=(sel,attrs)=>`<select ${attrs}>${opt('','De todos (se ve en todas las columnas)',!sel)}${pros().map(p=>opt(p.id,'De '+p.nombre,sel===p.id)).join('')}</select>`;
+  const feeds=S.gcfg.feeds.map(f=>`<div class="li gfeed"><span class="gdot ${f.ok===false?'bad':''}"></span><div class="main"><b>${f.ok===false?'No se pudo actualizar':'Conectado'}</b><span class="small muted">${f.ok===false?esc(f.error||'')+(f.lastOk?' · Última vez bien: '+hace(f.lastOk):''):`${f.count||0} eventos · actualizado ${hace(f.at)}`}</span><span class="small muted gurl">${esc(f.url)}</span></div>
+    ${pros().length>1?proSel(f.profesionalId,`class="sel-inline" data-gfeed="${esc(f.id)}" aria-label="Profesional del calendario"`):''}
+    <button class="btn sm ${S.gcfgSure===f.id?'danger':''}" data-a="gcfgDel" data-id="${esc(f.id)}">${S.gcfgSure===f.id?'¿Seguro? Tocá de nuevo':'Quitar'}</button></div>`).join('');
+  return `<div class="panel">${h3}
+    ${feeds?`<div class="list">${feeds}</div><div class="row" style="margin-top:10px"><button class="btn sm" data-a="gcfgRefresh" ${S.gcfgBusy?'disabled':''}>${S.gcfgBusy?'Actualizando…':'Actualizar ahora'}</button></div>`:''}
+    <details class="gsteps" ${feeds?'':'open'}><summary>${feeds?'Conectar otro calendario':'Cómo conectarlo'}</summary>
+    <ol class="steps"><li>Abrí <b>Google Calendar</b> en la computadora.</li><li>Arriba a la derecha tocá el engranaje <b>⚙ › Configuración</b>.</li><li>A la izquierda, en <b>Configuración de mis calendarios</b>, tocá tu calendario (el que tiene tu nombre).</li><li>Bajá hasta <b>Integrar el calendario</b> y copiá la <b>Dirección secreta en formato iCal</b>.</li><li>Pegala acá abajo y tocá <b>Conectar</b>.</li></ol>
+    <form class="gform" data-form="gcfg"><label class="f">Dirección secreta en formato iCal<input type="url" name="url" id="gcfgUrl" placeholder="https://calendar.google.com/calendar/ical/…/basic.ics" autocomplete="off" required></label>
+    ${pros().length>1?`<label class="f">¿De quién es este calendario?${proSel('','name="profesionalId" id="gcfgPro"')}</label>`:''}
+    <div class="row" style="justify-content:flex-end"><button class="btn primary" type="submit">Conectar</button></div></form>
+    <p class="small muted">Esa dirección es privada: no la compartas. La secretaría ve estos eventos como "Ocupado", sin el título.</p></details></div>`;
+}
+function vGcalOut(){
+  const intro=`<p class="small muted" style="margin-top:-6px">Los turnos de la plataforma aparecen en tu Google Calendar como un calendario aparte. Los eventos que vinieron de Google no se duplican.</p>`;
+  if(ST.mode!=='server')return `<div class="panel"><h3>2. De la agenda a Google Calendar</h3>${intro}<p>Para esto la agenda tiene que estar en el servidor de internet (la versión web). En el modo "solo en este equipo" Google no puede leer los turnos.</p></div>`;
+  if(privHost(ST.server))return `<div class="panel"><h3>2. De la agenda a Google Calendar</h3>${intro}<p>Este equipo está conectado a un servidor de la red de tu casa o consultorio (${esc(ST.server)}), y Google no puede entrar ahí. Activalo desde la versión web publicada en internet.</p></div>`;
   if(S.gcal===undefined){S.gcal=null;gcalLoad(false)}
-  if(!S.gcal)return `<div class="panel"><h3>Ver la agenda en Google Calendar</h3>${intro}<p class="${S.gcalErr?'':'muted'}">${esc(S.gcalErr||'Preparando tu enlace…')}</p>${S.gcalErr?'<button class="btn" data-a="gcalRetry">Reintentar</button>':''}</div>`;
+  if(!S.gcal)return `<div class="panel"><h3>2. De la agenda a Google Calendar</h3>${intro}<p class="${S.gcalErr?'':'muted'}">${esc(S.gcalErr||'Preparando tu enlace…')}</p>${S.gcalErr?'<button class="btn" data-a="gcalRetry">Reintentar</button>':''}</div>`;
   const add='https://calendar.google.com/calendar/render?cid='+encodeURIComponent(S.gcal.replace(/^https?:/,'webcal:'));
-  return `<div class="panel"><h3>Ver la agenda en Google Calendar</h3>${intro}
+  return `<div class="panel"><h3>2. De la agenda a Google Calendar</h3>${intro}
     <ol class="steps"><li>Desde la computadora, con la cuenta de Gmail donde querés ver los turnos, tocá <b>Agregar a Google Calendar</b>.</li><li>En Google Calendar confirmá con <b>Agregar</b>.</li><li>Listo: aparece el calendario <b>Agenda Dra Paulina Lopez</b>, también en la app de Google Calendar del celular.</li></ol>
     <div class="row" style="margin-top:12px"><a class="btn primary" href="${esc(add)}" target="_blank" rel="noopener">${I.cal||''}Agregar a Google Calendar</a><button class="btn" data-a="gcalCopy">Copiar enlace</button></div>
     <label class="f" style="margin-top:14px">Enlace del calendario<input type="text" id="gcalUrl" value="${esc(S.gcal)}" readonly></label>
